@@ -84,6 +84,42 @@ class ReliabilityTracker:
         )
         return new_score
 
+    def record_deployment(self, agent_id: str, success: bool) -> float:
+        """Adjust agent score based on deployment outcome and persist. Returns new score.
+
+        Args:
+            agent_id: Agent identifier (e.g. "claude", "codex", "gemini").
+            success: True for deployment success (+0.03), False for failure (-0.20).
+
+        Returns:
+            The updated score, clamped to [SCORE_MIN, SCORE_MAX].
+        """
+        delta = 0.03 if success else -0.20
+        data = self.load()
+
+        agents = data.setdefault("agents", {})
+        if agent_id not in agents:
+            agents[agent_id] = {"score": 1.0, "history": [], "total_tasks": 0}
+
+        agent = agents[agent_id]
+        new_score = max(self.SCORE_MIN, min(self.SCORE_MAX, agent["score"] + delta))
+        agent["score"] = new_score
+        agent["history"].append(
+            {
+                "outcome": "deployment_success" if success else "deployment_failure",
+                "delta": delta,
+                "score_after": new_score,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+
+        self.save(data)
+        outcome_label = "deployment_success" if success else "deployment_failure"
+        logger.info(
+            "ReliabilityTracker: %s %s -> score=%.3f", agent_id, outcome_label, new_score
+        )
+        return new_score
+
     def get_score(self, agent_id: str) -> float:
         """Return current score for agent_id, defaulting to 1.0 if unknown."""
         data = self.load()

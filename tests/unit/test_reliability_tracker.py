@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -74,6 +73,57 @@ def test_score_clamped_to_min_max(tmp_path: Path) -> None:
     )
     high_score = tracker.update("gemini", "success")
     assert high_score <= ReliabilityTracker.SCORE_MAX
+
+
+def test_record_deployment_success(tmp_path: Path) -> None:
+    """record_deployment(success=True) should increase score by 0.03."""
+    path = tmp_path / "reliability.json"
+    tracker = ReliabilityTracker(path)
+
+    tracker.save(
+        {
+            "agents": {"claude": {"score": 0.7, "history": [], "total_tasks": 2}},
+            "last_updated": "2026-01-01T00:00:00+00:00",
+        }
+    )
+
+    new_score = tracker.record_deployment("claude", success=True)
+
+    assert new_score == pytest.approx(0.7 + 0.03)
+
+
+def test_record_deployment_failure(tmp_path: Path) -> None:
+    """record_deployment(success=False) should decrease score by 0.20."""
+    path = tmp_path / "reliability.json"
+    tracker = ReliabilityTracker(path)
+
+    tracker.save(
+        {
+            "agents": {"codex": {"score": 0.8, "history": [], "total_tasks": 3}},
+            "last_updated": "2026-01-01T00:00:00+00:00",
+        }
+    )
+
+    new_score = tracker.record_deployment("codex", success=False)
+
+    assert new_score == pytest.approx(0.8 - 0.20)
+
+
+def test_record_deployment_clamp_min(tmp_path: Path) -> None:
+    """record_deployment failure must never push score below SCORE_MIN (0.1)."""
+    path = tmp_path / "reliability.json"
+    tracker = ReliabilityTracker(path)
+
+    tracker.save(
+        {
+            "agents": {"gemini": {"score": 0.15, "history": [], "total_tasks": 1}},
+            "last_updated": "2026-01-01T00:00:00+00:00",
+        }
+    )
+
+    new_score = tracker.record_deployment("gemini", success=False)
+
+    assert new_score >= ReliabilityTracker.SCORE_MIN
 
 
 def test_persistence_load_save(tmp_path: Path) -> None:

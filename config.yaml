@@ -44,7 +44,7 @@ agents:
 paths:
   inbox: "inbox/"
   orchestra: ".orchestra/"
-  assignments: ".orchestra/assignments/"
+  assignments: ".orchestra/state/assigned/"
   cache: ".orchestra/cache/"
   locks: ".orchestra/locks/"
   logs: ".orchestra/logs/"
@@ -59,3 +59,12 @@ quality_gates:
   min_test_coverage: 0.80
   require_security_scan: true
   require_release_notes: true
+
+# Multi-target project support (P3-T06)
+# Uncomment and configure to orchestrate multiple projects simultaneously
+#targets:
+#  - path: "../my-project-1"
+#    name: "project-1"
+#    orchestra_dir: ".orchestra"
+#  - path: "../my-project-2"
+#    name: "project-2"
