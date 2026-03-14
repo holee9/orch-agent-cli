@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -73,8 +74,10 @@ def acquire_pid_lock(pid_file: Path = PID_FILE) -> None:
     except FileExistsError:
         raise RuntimeError("Orchestrator already running") from None
     else:
-        os.write(fd, str(os.getpid()).encode())
-        os.close(fd)
+        try:
+            os.write(fd, str(os.getpid()).encode())
+        finally:
+            os.close(fd)
 
 
 def release_pid_lock(pid_file: Path = PID_FILE) -> None:
@@ -175,8 +178,6 @@ class Orchestrator:
         Returns:
             New list of agent dicts with ``available: bool`` added.
         """
-        from concurrent.futures import ThreadPoolExecutor
-
         def _check_one(agent: dict) -> dict:
             available = self._check_cli_available(agent.get("cli", ""))
             if not available:
