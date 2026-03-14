@@ -1,8 +1,29 @@
+---
+id: SPEC-INFRA-001
+title: Multi-AI CLI Agent Orchestration System
+version: "2.0"
+status: planned
+created: 2026-03-14
+updated: 2026-03-14
+author: Human Developer
+priority: high
+---
+
+## HISTORY (변경 이력)
+
+| 버전 | 날짜 | 변경 내용 |
+|------|------|-----------|
+| v1.0 | 2026-03-14 | 초판 (GitHub Actions 기반) |
+| v1.1 | 2026-03-14 | 기존 인프라 참조 제거, 단일 환경 개정 |
+| v2.0 | 2026-03-14 | **전면 재설계:** 다중 터미널 CLI 에이전트 협업 구조로 변경. 파일 시스템 기반 태스크 보드(`.orchestra/`), 에이전트별 역할 문서(CLAUDE.md/CODEX.md/GEMINI.md), 제품개발 프로세스 7단계별 에이전트 배치, 오케스트레이터(file watcher), 태스크 잠금/상태 전이, 현실적 데모 시나리오(터미널별 타임라인) |
+
+---
+
 # Multi-AI CLI Agent Orchestration — 구현 계획서
 
-> **문서 버전:** v2.0  
-> **작성일:** 2026-03-14  
-> **기반 문서:** orche-agent.md (초안)  
+> **문서 버전:** v2.0
+> **작성일:** 2026-03-14
+> **기반 문서:** orche-agent.md (초안)
 > **운영 형태:** 다중 터미널에서 개별 실행되는 CLI 에이전트의 협업 오케스트레이션
 
 ---
@@ -10,13 +31,15 @@
 ## 목차
 
 1. [운영 개념](#1-운영-개념)
-2. [오케스트레이션 아키텍처](#2-오케스트레이션-아키텍처)
-3. [제품개발 프로세스별 에이전트 운영](#3-제품개발-프로세스별-에이전트-운영)
-4. [Phase별 구현 계획 및 체크리스트](#4-phase별-구현-계획-및-체크리스트)
-5. [핵심 컴포넌트 상세 설계](#5-핵심-컴포넌트-상세-설계)
-6. [잠재적 문제점 및 해소 방안](#6-잠재적-문제점-및-해소-방안)
-7. [데모 시나리오](#7-데모-시나리오)
-8. [부록: 워크플로우 다이어그램](#8-부록-워크플로우-다이어그램)
+2. [시스템 요구사항](#2-시스템-요구사항)
+3. [합의 기준](#3-합의-기준)
+4. [오케스트레이션 아키텍처](#4-오케스트레이션-아키텍처)
+5. [제품개발 프로세스별 에이전트 운영](#5-제품개발-프로세스별-에이전트-운영)
+6. [Phase별 구현 계획](#6-phase별-구현-계획)
+7. [핵심 컴포넌트 상세 설계](#7-핵심-컴포넌트-상세-설계)
+8. [잠재적 문제점 및 해소 방안](#8-잠재적-문제점-및-해소-방안)
+9. [데모 시나리오](#9-데모-시나리오)
+10. [부록: 워크플로우 다이어그램](#10-부록-워크플로우-다이어그램)
 
 ---
 
@@ -77,7 +100,48 @@
 
 ---
 
-## 2. 오케스트레이션 아키텍처
+## 2. 시스템 요구사항
+
+### 2.1 EARS 형식 요구사항
+
+| EARS 패턴 | 요구사항 |
+|-----------|---------|
+| Ubiquitous | The system shall track task state transitions: `backlog → in_progress → review → done` |
+| Ubiquitous | The system shall validate all task files against `schemas/task.schema.json` before processing |
+| Event-Driven | WHEN a task file appears in `.orchestra/tasks/backlog/` THEN the orchestrator assigns it to an available agent based on stage-role mapping |
+| Event-Driven | WHEN all expected agent reports arrive for a task THEN the consensus engine calculates the weighted readiness score |
+| Event-Driven | WHEN a `veto` vote is submitted THEN the orchestrator halts the task and initiates re-review (max 2 times before human escalation) |
+| State-Driven | IF an agent lock exceeds 30 minutes without update THEN the orchestrator releases the lock and reassigns the task |
+| State-Driven | IF the consensus ratio reaches ≥ 0.9 THEN the orchestrator marks the task as ready for PR creation |
+| Unwanted | The system shall not allow an agent to modify files outside its permitted scope defined in `agents.json` |
+| Unwanted | The system shall not proceed to the next stage if JSON schema validation fails |
+| Optional | Where possible, provide a terminal dashboard showing real-time task status and agent activity |
+
+---
+
+## 3. 합의 기준
+
+### 3.1 시나리오 1: 정상 합의 통과
+
+- **Given:** 태스크가 review 단계에 진입하고 3개 에이전트 모두 보고서를 제출함
+- **When:** 오케스트레이터가 합의 엔진을 실행함
+- **Then:** 가중 합의 비율 ≥ 0.9이면 태스크가 done으로 전이되고 PR 생성 신호가 발생함
+
+### 3.2 시나리오 2: Veto 처리
+
+- **Given:** Gemini가 `"vote": "veto"`를 포함한 보고서를 제출함
+- **When:** 합의 엔진이 Veto를 감지함
+- **Then:** 즉시 합의가 중단되고 `consensus.json`에 `"can_proceed": false, "reason": "VETO"` 기록, re-review loop 시작
+
+### 3.3 시나리오 3: 태스크 잠금 타임아웃
+
+- **Given:** Codex가 태스크를 `locked_by: codex`로 수령 후 30분 동안 보고서 미제출
+- **When:** 오케스트레이터가 타임아웃을 감지함
+- **Then:** `locked_by`가 null로 초기화되고 태스크가 backlog로 복귀하여 재할당됨
+
+---
+
+## 4. 오케스트레이션 아키텍처
 
 ### 2.1 파일 시스템 기반 태스크 보드
 
@@ -168,7 +232,7 @@ Codex CLI ────┘    (파일 시스템이        └── Gemini CLI
 
 ---
 
-## 3. 제품개발 프로세스별 에이전트 운영
+## 5. 제품개발 프로세스별 에이전트 운영
 
 ### 3.1 프로세스 흐름과 에이전트 배치
 
@@ -345,52 +409,23 @@ project-root/
 
 ---
 
-## 4. Phase별 구현 계획 및 체크리스트
+## 6. Phase별 구현 계획
 
 ### Phase 1: MVP (4–6주)
 
 **목표:** 2개 에이전트(Claude Code + Codex CLI)로 기본 협업 루프 구축
 
-#### 체크리스트
-
-- [ ] **오케스트레이션 기반 구축**
-  - [ ] `.orchestra/` 디렉토리 구조 생성
-  - [ ] `config/agents.json` 작성 (에이전트 2개 등록)
-  - [ ] `config/process.json` 작성 (개발 프로세스 6단계 정의)
-  - [ ] 태스크 JSON 스키마 정의 (`schemas/task.schema.json`)
-  - [ ] 리포트 JSON 스키마 정의 (`schemas/release_readiness.schema.json`)
-
-- [ ] **에이전트 역할 문서**
-  - [ ] `AGENTS.md` 공통 규칙 작성
-  - [ ] `CLAUDE.md` 작성 (설계 + 리뷰 역할 지시)
-  - [ ] `CODEX.md` 작성 (구현 + 패치 생성 역할 지시)
-
-- [ ] **기본 오케스트레이터**
-  - [ ] `scripts/orchestrator.py` 작성
-  - [ ] 파일 시스템 watch (`.orchestra/tasks/` 감시)
-  - [ ] 태스크 상태 전이 검증
-  - [ ] 리포트 수집 → 합의 계산 트리거
-  - [ ] 터미널 알림 출력
-
-- [ ] **2-에이전트 협업 루프 검증**
-  - [ ] Claude Code: 요구사항 → 스펙 → 태스크 생성
-  - [ ] Codex CLI: 태스크 수령 → 구현 → 커밋
-  - [ ] Claude Code: 코드 리뷰 → 리포트 작성
-  - [ ] 오케스트레이터: 리포트 수집 → 합의 계산 (2 에이전트)
-
-- [ ] **CI 연동 (별도 파이프라인)**
-  - [ ] `.github/workflows/ci.yml`: 빌드, 테스트, 린트, 보안 스캔
-  - [ ] CI 결과를 `.orchestra/reports/`에 자동 기록하는 스크립트
-
-#### Phase 1 산출물
-
-| 파일 | 설명 |
-|------|------|
-| `.orchestra/` 전체 구조 | 태스크 보드 + 리포트 + 합의 |
-| `AGENTS.md`, `CLAUDE.md`, `CODEX.md` | 에이전트 역할 문서 |
-| `scripts/orchestrator.py` | 파일 감시 + 합의 트리거 |
-| `schemas/task.schema.json` | 태스크 정의 스키마 |
-| `schemas/release_readiness.schema.json` | 리포트 스키마 |
+| Task ID | 작업 | 담당 에이전트 역할 | 산출물 |
+|---------|------|-----------------|--------|
+| P1-T01 | `.orchestra/` 디렉토리 구조 생성 | 인간 개발자 | `.orchestra/` 초기 디렉토리 트리 |
+| P1-T02 | `schemas/task.schema.json` 정의 | 인간 개발자 | JSON Schema 파일 |
+| P1-T03 | `schemas/release_readiness.schema.json` 정의 | 인간 개발자 | JSON Schema 파일 |
+| P1-T04 | `config/agents.json` 작성 (Claude, Codex 2개) | 인간 개발자 | 에이전트 설정 파일 |
+| P1-T05 | `config/process.json` 작성 (6단계 프로세스) | 인간 개발자 | 프로세스 정의 파일 |
+| P1-T06 | `scripts/orchestrator.py` 구현 | Claude Code | 파일 와처 + 합의 트리거 |
+| P1-T07 | `scripts/consensus.py` 구현 | Claude Code | 가중 합산 + Veto 처리 |
+| P1-T08 | 에이전트 역할 문서 작성 (AGENTS.md, CLAUDE.md, CODEX.md) | 인간 개발자 | 역할 문서 3종 |
+| P1-T09 | 2-에이전트 협업 루프 E2E 검증 (Demo 1) | Claude + Codex | 검증 보고서 |
 
 ---
 
@@ -398,35 +433,18 @@ project-root/
 
 **목표:** Gemini CLI 추가, 가중 합의 알고리즘, 전체 프로세스 자동화
 
-#### 체크리스트
-
-- [ ] **Gemini CLI 통합**
-  - [ ] `GEMINI.md` 작성 (테스트 강화 + Red Team 역할)
-  - [ ] `config/agents.json` 업데이트 (3개 에이전트, 가중치 설정)
-  - [ ] Gemini의 팩트체크 워크플로우 검증
-
-- [ ] **합의 엔진 완성**
-  - [ ] `scripts/consensus.py` 구현
-  - [ ] 가중치: `effective_weight = base_weight × reliability × confidence`
-  - [ ] 합의 비율: `Σ(w_i × ready_i) / Σ(w_i)` ≥ 0.9
-  - [ ] Veto 처리: 즉시 차단 → re-review loop (최대 2회)
-  - [ ] 점수 분산 감지: 편차 > 20pt → 추가 증거 수집 요청
-
-- [ ] **프로세스 자동화**
-  - [ ] 오케스트레이터: 단계 전이 시 다음 에이전트에 자동 할당
-  - [ ] 태스크 잠금/해제 자동화
-  - [ ] 리포트 도착 감지 → 합의 자동 계산
-  - [ ] PR 자동 생성 (합의 통과 시)
-
-- [ ] **신뢰도 추적 시작**
-  - [ ] `config/agent_reliability.json` 초기화
-  - [ ] 합의 통과 후 CI 결과 기반 신뢰도 업데이트 스크립트
-  - [ ] 프로덕션 인시던트 연동 (수동 기록 → Phase 3에서 자동화)
-
-- [ ] **개발자 UX**
-  - [ ] `scripts/dashboard.py`: 터미널 기반 대시보드 (태스크 현황, 에이전트 상태)
-  - [ ] `scripts/task_create.py`: 태스크 생성 CLI 도구
-  - [ ] `scripts/report_view.py`: 합의 결과 조회
+| Task ID | 작업 | 담당 에이전트 역할 | 산출물 |
+|---------|------|-----------------|--------|
+| P2-T01 | `GEMINI.md` 작성 (테스트 강화 + Red Team 역할) | 인간 개발자 | 에이전트 역할 문서 |
+| P2-T02 | `config/agents.json` 업데이트 (3개 에이전트, 가중치 설정) | 인간 개발자 | 업데이트된 에이전트 설정 파일 |
+| P2-T03 | Gemini 팩트체크 워크플로우 검증 | Claude + Gemini | 검증 보고서 |
+| P2-T04 | `scripts/consensus.py` 구현 (가중 합의 알고리즘) | Claude Code | 가중 합산 + Veto 처리 로직 |
+| P2-T05 | Veto 처리 및 점수 분산 감지 로직 구현 | Claude Code | 합의 엔진 완성본 |
+| P2-T06 | 오케스트레이터 단계 전이 및 태스크 잠금 자동화 | Claude Code | 업데이트된 orchestrator.py |
+| P2-T07 | `config/agent_reliability.json` 초기화 및 CI 기반 업데이트 스크립트 | 인간 개발자 + Claude Code | 신뢰도 추적 시스템 |
+| P2-T08 | `scripts/dashboard.py` 구현 (터미널 대시보드) | Claude Code | 터미널 실시간 대시보드 |
+| P2-T09 | `scripts/task_create.py`, `scripts/report_view.py` 구현 | Claude Code | CLI 도구 2종 |
+| P2-T10 | 3-에이전트 협업 루프 E2E 검증 (Demo 2) | Claude + Codex + Gemini | 검증 보고서 |
 
 ---
 
@@ -436,30 +454,20 @@ project-root/
 
 #### 체크리스트
 
-- [ ] **에이전트 신뢰도 자동 피드백**
-  - [ ] 배포 성공/실패에 따른 자동 점수 조정
-  - [ ] 에이전트별 히스토리컬 정확도 대시보드
-  - [ ] 신뢰도 급락 시 가중치 자동 하향 + 알림
-
-- [ ] **비용 관리**
-  - [ ] 에이전트별 토큰 사용량 추적 (`.orchestra/logs/` 분석)
-  - [ ] 태스크 규모별 에이전트 선택적 실행 (소규모 변경 → Claude만)
-  - [ ] 프롬프트 최적화 (컨텍스트 길이 관리)
-
-- [ ] **보안 거버넌스**
-  - [ ] `docs/security/owasp_llm_matrix.md`: OWASP LLM Top 10 대응
-  - [ ] `docs/security/nist_ssdf_policy.md`: NIST SSDF 정렬
-  - [ ] 에이전트 출력물 시크릿 스캔 자동화
-  - [ ] 프롬프트 인젝션 방어 테스트 (Red Team Gemini 활용)
-
-- [ ] **확장 옵션 (선택)**
-  - [ ] n8n 연동: Slack 알림, 외부 승인 흐름
-  - [ ] GitHub Actions 연동: 합의 결과 → 자동 PR 라벨링
-  - [ ] 웹 대시보드: `.orchestra/` 데이터 시각화
+| Task ID | 작업 | 담당 에이전트 역할 | 산출물 |
+|---------|------|-----------------|--------|
+| P3-T01 | 배포 성공/실패 기반 신뢰도 자동 점수 조정 구현 | Claude Code | 신뢰도 피드백 루프 스크립트 |
+| P3-T02 | 에이전트별 히스토리컬 정확도 대시보드 구현 | Claude Code | 업데이트된 dashboard.py |
+| P3-T03 | 에이전트별 토큰 사용량 추적 및 비용 최적화 모듈 | Claude Code | 비용 추적 모듈 |
+| P3-T04 | `docs/security/owasp_llm_matrix.md` 작성 | 인간 개발자 | OWASP LLM Top 10 대응 문서 |
+| P3-T05 | `docs/security/nist_ssdf_policy.md` 작성 | 인간 개발자 | NIST SSDF 정렬 문서 |
+| P3-T06 | 에이전트 출력물 시크릿 스캔 자동화 | Claude Code | 시크릿 스캔 스크립트 |
+| P3-T07 | 프롬프트 인젝션 방어 테스트 (Red Team Gemini) | Gemini | 방어 테스트 보고서 |
+| P3-T08 | 확장 옵션 검토 및 구현 (n8n, GitHub Actions, 웹 대시보드) | 인간 개발자 | 확장 계획 문서 |
 
 ---
 
-## 5. 핵심 컴포넌트 상세 설계
+## 7. 핵심 컴포넌트 상세 설계
 
 ### 5.1 태스크 스키마 (task.schema.json)
 
@@ -781,7 +789,7 @@ if __name__ == "__main__":
 
 ---
 
-## 6. 잠재적 문제점 및 해소 방안
+## 8. 잠재적 문제점 및 해소 방안
 
 ### 6.1 동시성 및 충돌
 
@@ -859,7 +867,7 @@ if __name__ == "__main__":
 
 ---
 
-## 7. 데모 시나리오
+## 9. 데모 시나리오
 
 ### 7.1 Demo 1: "Two-Agent Loop" (Phase 1)
 
@@ -1000,7 +1008,7 @@ score:95, ready                                  score:91, ready
 
 ---
 
-## 8. 부록: 워크플로우 다이어그램
+## 10. 부록: 워크플로우 다이어그램
 
 ### 8.1 에이전트 협업 시퀀스
 
@@ -1111,10 +1119,3 @@ project-root/
 
 ---
 
-## 변경 이력
-
-| 버전 | 날짜 | 변경 내용 |
-|------|------|-----------|
-| v1.0 | 2026-03-14 | 초판 (GitHub Actions 기반) |
-| v1.1 | 2026-03-14 | 기존 인프라 참조 제거, 단일 환경 개정 |
-| v2.0 | 2026-03-14 | **전면 재설계:** 다중 터미널 CLI 에이전트 협업 구조로 변경. 파일 시스템 기반 태스크 보드(`.orchestra/`), 에이전트별 역할 문서(CLAUDE.md/CODEX.md/GEMINI.md), 제품개발 프로세스 7단계별 에이전트 배치, 오케스트레이터(file watcher), 태스크 잠금/상태 전이, 현실적 데모 시나리오(터미널별 타임라인) |
