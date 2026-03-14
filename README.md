@@ -240,11 +240,44 @@ orchestrator:
 
 #### 4단계: BRIEF 파일 작성 및 투입
 
+BRIEF는 에이전트에게 "무엇을 만들어달라"고 지시하는 시작 문서입니다. **한국어로 작성 가능합니다.**
+
 ```bash
-# inbox/ 에 BRIEF 파일 작성 (한국어 가능)
-cp templates/inbox/BRIEF-TEMPLATE.md /path/to/my-target-project/inbox/BRIEF-$(date +%Y-%m-%d).md
-# 파일 내용 편집 후 저장
+# 예제 파일로 시작하기 (권장)
+cp /path/to/orch-agent-cli/templates/inbox/BRIEF-EXAMPLE.md \
+   /path/to/my-target-project/inbox/BRIEF-001.md
+# 내용을 내 프로젝트에 맞게 수정 후 저장
 ```
+
+**BRIEF 파일 필수 항목:**
+
+```markdown
+# [제목 — 한 줄로 기능 설명]
+
+## 프로젝트
+[어떤 프로젝트인지 한 줄]
+
+## 배경
+[왜 이 기능이 필요한지]
+
+## 목표
+- [구체적인 목표 1]
+- [구체적인 목표 2]
+
+## 범위
+### 포함
+- [만들어야 할 것]
+### 제외
+- [이번에 하지 않을 것]
+
+## 기술스택
+- 언어/프레임워크/DB
+
+## 우선순위
+- P0 (필수): ...
+```
+
+> 전체 예제: `templates/inbox/BRIEF-EXAMPLE.md` (로그인 기능 추가 예시 포함)
 
 ---
 
@@ -252,12 +285,34 @@ cp templates/inbox/BRIEF-TEMPLATE.md /path/to/my-target-project/inbox/BRIEF-$(da
 
 > **핵심:** `run_agent.sh`가 에이전트를 자율 실행합니다. `claude`/`codex`/`gemini`를 직접 실행하거나 프롬프트를 입력할 필요가 없습니다.
 
+#### 사전 요구사항: API 키 설정
+
+`run_agent.sh`는 각 에이전트를 **headless(비대화형)** 모드로 실행합니다.
+각 CLI의 비대화형 모드는 API 키가 필요합니다:
+
+| 에이전트 | headless 플래그 | 필요한 환경변수 |
+|---------|----------------|----------------|
+| claude  | `claude -p`    | `ANTHROPIC_API_KEY` **필수** |
+| codex   | `codex exec`   | OpenAI 계정 로그인 상태 필요 |
+| gemini  | `gemini -p --yolo` | Google 계정 로그인 상태 필요 |
+
+```bash
+# T2 실행 전 반드시 설정
+export ANTHROPIC_API_KEY="sk-ant-api03-..."   # Anthropic Console에서 발급
+```
+
+> **주의:** `claude` 대화형 세션(OAuth)과 `claude -p` API 키는 별개입니다.
+> `claude`를 인터랙티브로 로그인했더라도 `ANTHROPIC_API_KEY`를 별도로 설정해야 합니다.
+
+---
+
 #### 실행 순서: T2 → T3 → T4 먼저, T1 마지막
 
 **T2 터미널 — Claude 에이전트 러너**
 
 ```bash
-# 새 터미널을 열고 아래 명령어 하나만 입력
+# ANTHROPIC_API_KEY 설정 후 실행
+export ANTHROPIC_API_KEY="sk-ant-api03-..."
 bash /path/to/orch-agent-cli/scripts/run_agent.sh claude /path/to/my-target-project
 ```
 
@@ -268,7 +323,8 @@ bash /path/to/orch-agent-cli/scripts/run_agent.sh claude /path/to/my-target-proj
 2026-03-14T10:00:00Z [claude] Sleeping 97s...
 ```
 
-이후 자동으로 대기 → 할당 감지 → `claude -p "..."` 실행의 루프를 반복합니다.
+대기 → 할당 감지 → `claude -p "..."` 실행 루프를 자동 반복합니다.
+`ANTHROPIC_API_KEY` 미설정 시 즉시 오류 메시지와 함께 종료됩니다.
 
 ---
 

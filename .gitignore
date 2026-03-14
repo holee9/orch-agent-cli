@@ -11,7 +11,7 @@ venv/
 env/
 .env
 .orchestra/
-inbox/
+/inbox/
 *.log
 .pytest_cache/
 .coverage
