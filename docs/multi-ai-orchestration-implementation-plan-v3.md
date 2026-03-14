@@ -1204,7 +1204,33 @@ def load_reliability() -> dict:
 | S2 | 에이전트가 시크릿을 GitHub 댓글에 노출 | LLM06 | GitHub 게시 전 `gitleaks` 스캔, pre-commit hook |
 | S3 | 에이전트가 권한 외 명령 실행 | LLM08 | Codex `--sandbox workspace-write`, Claude/Gemini 파일 범위 제한 |
 
-### 13.2 데모 시나리오
+### 13.2 E2E 검증 결과 (2026-03-14)
+
+#### 파이프라인 검증 완료
+- **검증 방법:** `run_agent.sh`를 통한 실제 headless CLI 실행
+- **검증 환경:** holee9/orch-test-target (격리 테스트 리포)
+- **결과:** 3개 에이전트 전체 파이프라인 정상 작동 확인
+
+#### 발견된 기술 이슈
+1. **Bash 3.2 호환성** — macOS 기본 bash가 `${var^^}` 미지원. `tr`로 수정.
+2. **claude -p 인증** — 서브프로세스 환경 충돌로 오진 가능. 사용자 터미널에서 OAuth 정상 작동.
+
+#### Phase 2 진입 조건 충족 여부
+- ✅ 핵심 아키텍처 검증 (이중 레이어 통신)
+- ✅ 3개 에이전트 자율 실행
+- ✅ GitHub Issues 연동
+- ✅ 완료 신호 및 리포트 생성
+- ⚠️ Gemini가 지적한 blockers: `release_readiness.schema.json` 누락, `PLAN-001.md` 누락 → Phase 2에서 해결
+
+#### 향후 방향 (Phase 2)
+1. Orchestrator가 완료 신호를 감지해 다음 에이전트에 자동 할당하는 전체 순환 루프 구현
+2. `release_readiness.schema.json` 정비
+3. 합의 엔진 연동 (3개 에이전트 투표 → 자동 다음 단계 결정)
+4. BRIEF → Final Report 전체 자동 흐름 E2E 테스트
+
+---
+
+### 13.3 데모 시나리오
 
 #### Demo 1: "BRIEF to Kickoff" (Phase 1)
 
@@ -1278,7 +1304,7 @@ PR 확인 → merge → deploy
 3. Claude + Codex 2개 리포트로 가중치 재분배 후 합의 계산
 4. Final Report에 "degraded mode: gemini unavailable" 기록
 
-### 13.3 언어 정책
+### 13.4 언어 정책
 
 #### 언어 정책 완성표
 
@@ -1311,7 +1337,7 @@ GitHub Issue #1 (KICKOFF) → 영어 자동 변환
 인간: Final Report (한국어 + 기술용어 영어) 수신
 ```
 
-### 13.4 v3 계획서 검증 체크리스트
+### 13.5 v3 계획서 검증 체크리스트
 
 1. ✓ "타 프로젝트에 설치하는 도구"임이 섹션 1에 명시
 2. ✓ GitHub Issues 이벤트 감지 기술 타당성 분석 포함 (방법 A/B/C/D)
