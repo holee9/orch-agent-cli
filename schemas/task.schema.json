@@ -2,113 +2,90 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "task.schema.json",
   "title": "Task",
-  "description": "Defines the lifecycle of an orchestration task from creation through completion, including assignment, locking, and completion signaling.",
+  "description": "Task tracking schema for multi-AI orchestration workflows.",
   "type": "object",
-  "required": ["task_id", "session_id", "title", "stage", "created_at"],
+  "required": [
+    "id",
+    "type",
+    "status",
+    "assigned_to",
+    "priority",
+    "title",
+    "description",
+    "created_at",
+    "updated_at",
+    "blocks",
+    "blocked_by"
+  ],
   "additionalProperties": false,
   "properties": {
-    "task_id": {
+    "id": {
       "type": "string",
-      "description": "Unique identifier for the task. Format: task-NNN or task-NNN-label.",
-      "pattern": "^task-[0-9]{3,}(-[a-z]+)?$"
+      "description": "Unique task identifier."
     },
-    "session_id": {
+    "type": {
       "type": "string",
-      "description": "Identifier of the orchestration session this task belongs to."
+      "description": "Task type classification.",
+      "enum": ["analysis", "design", "implementation", "review", "testing", "release"]
+    },
+    "status": {
+      "type": "string",
+      "description": "Current task status.",
+      "enum": ["open", "claimed", "in_progress", "review", "done", "blocked"]
+    },
+    "assigned_to": {
+      "type": "string",
+      "description": "Agent or entity assigned to this task.",
+      "enum": ["claude", "codex", "gemini", "human", "unassigned"]
+    },
+    "priority": {
+      "type": "string",
+      "description": "Task priority level.",
+      "enum": ["P1", "P2", "P3"]
     },
     "title": {
       "type": "string",
-      "description": "Short human-readable title for the task."
+      "description": "Short descriptive title of the task."
     },
     "description": {
       "type": "string",
-      "description": "Detailed description of what the task entails."
-    },
-    "github_issue_number": {
-      "type": "integer",
-      "description": "Associated GitHub issue number, if any.",
-      "minimum": 1
-    },
-    "stage": {
-      "type": "string",
-      "description": "Current lifecycle stage of the task.",
-      "enum": [
-        "kickoff",
-        "requirements",
-        "planning",
-        "implementation",
-        "review",
-        "testing",
-        "consensus",
-        "release",
-        "final-report"
-      ]
-    },
-    "assigned_to": {
-      "type": "object",
-      "description": "Agent assignment for this task.",
-      "additionalProperties": false,
-      "properties": {
-        "primary": {
-          "type": "string",
-          "description": "Agent ID of the primary assignee responsible for completing the task."
-        },
-        "secondary": {
-          "type": "array",
-          "description": "Agent IDs of secondary assignees providing support.",
-          "items": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    "locked_by": {
-      "type": ["string", "null"],
-      "description": "Agent ID that currently holds an exclusive lock on this task. Null when unlocked."
-    },
-    "locked_at": {
-      "type": ["string", "null"],
-      "description": "ISO 8601 timestamp when the lock was acquired. Null when unlocked.",
-      "format": "date-time"
-    },
-    "rereview_count": {
-      "type": "integer",
-      "description": "Number of times this task has been sent back for re-review.",
-      "default": 0,
-      "minimum": 0
-    },
-    "completion_signal": {
-      "type": "object",
-      "description": "Signal emitted by an agent upon completing the task.",
-      "additionalProperties": false,
-      "properties": {
-        "agent_id": {
-          "type": "string",
-          "description": "ID of the agent that completed the task."
-        },
-        "completed_at": {
-          "type": "string",
-          "description": "ISO 8601 timestamp when the task was completed.",
-          "format": "date-time"
-        },
-        "artifacts": {
-          "type": "array",
-          "description": "List of artifact paths or identifiers produced by the task.",
-          "items": {
-            "type": "string"
-          }
-        }
-      }
+      "description": "Detailed description of the task."
     },
     "created_at": {
       "type": "string",
-      "description": "ISO 8601 timestamp when the task was created.",
-      "format": "date-time"
+      "format": "date-time",
+      "description": "Timestamp when the task was created."
     },
     "updated_at": {
       "type": "string",
-      "description": "ISO 8601 timestamp of the most recent update to the task.",
-      "format": "date-time"
+      "format": "date-time",
+      "description": "Timestamp when the task was last updated."
+    },
+    "github_issue_number": {
+      "type": "integer",
+      "description": "Associated GitHub issue number."
+    },
+    "blocks": {
+      "type": "array",
+      "description": "List of task IDs that cannot start until this task is done.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "blocked_by": {
+      "type": "array",
+      "description": "List of task IDs that must be completed before this task can start.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "result_summary": {
+      "type": "string",
+      "description": "Summary of the task result upon completion."
     }
   }
 }

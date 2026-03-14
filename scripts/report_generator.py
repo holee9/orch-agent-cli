@@ -28,7 +28,7 @@ class ReportData(TypedDict):
     target_repo: NotRequired[str]
     completed_issues: NotRequired[list[dict]]
     consensus_results: NotRequired[list[dict]]
-    reports: NotRequired[list[dict]]
+    reports: NotRequired[dict[str, dict]]
     issues: NotRequired[list[dict]]
     duration_seconds: NotRequired[float]
     agent_stats: NotRequired[dict]
@@ -204,6 +204,238 @@ def generate_report_markdown(session_data: ReportData | dict) -> str:
     ])
 
     return "\n".join(lines)
+
+
+class ReportGenerator:
+    """Generates Markdown final reports from completed workflow data in .orchestra/."""
+
+    def __init__(self, config_path: Path, agents_path: Path) -> None:
+        """Initialize with paths to config and agent registry files.
+
+        Args:
+            config_path: Path to config YAML file.
+            agents_path: Path to agents.json registry.
+        """
+        self._config_path = Path(config_path)
+        self._agents_path = Path(agents_path)
+        self._config = self._load_config()
+        self._agents = self._load_agents()
+
+        target_path = self._config.get("orchestrator", {}).get("target_project_path", "")
+        orchestra_subdir = self._config.get("orchestrator", {}).get("orchestra_dir", ".orchestra")
+        if target_path:
+            self._orchestra_dir = Path(target_path) / orchestra_subdir
+        else:
+            self._orchestra_dir = Path(orchestra_subdir)
+
+    def generate(self, spec_id: str) -> Path:
+        """Collect workflow data and write a Markdown final report.
+
+        Args:
+            spec_id: Identifier for the spec/session (e.g. "SPEC-001").
+
+        Returns:
+            Path to the written report file.
+        """
+        data = self._collect_workflow_data(spec_id)
+        markdown = self._format_markdown(data)
+
+        reports_dir = self._orchestra_dir / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        report_path = reports_dir / f"{spec_id}-final-report.md"
+        report_path.write_text(markdown, encoding="utf-8")
+        logger.info("Final report written: %s", report_path)
+        return report_path
+
+    def _load_config(self) -> dict:
+        if not self._config_path.exists():
+            logger.warning("Config not found: %s — using defaults", self._config_path)
+            return {}
+        import yaml
+        with open(self._config_path) as f:
+            return yaml.safe_load(f) or {}
+
+    def _load_agents(self) -> list[dict]:
+        if not self._agents_path.exists():
+            logger.warning("Agents registry not found: %s — using empty list", self._agents_path)
+            return []
+        with open(self._agents_path) as f:
+            data = json.load(f)
+        return data.get("agents", [])
+
+    def _collect_workflow_data(self, spec_id: str) -> dict:
+        """Collect all available workflow artefacts for spec_id from .orchestra/.
+
+        Args:
+            spec_id: The spec/session identifier.
+
+        Returns:
+            Dictionary with keys: spec_id, timestamp, agents, consensus, release_readiness.
+        """
+        data: dict = {
+            "spec_id": spec_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "agents": self._agents,
+            "consensus": None,
+            "release_readiness": None,
+        }
+
+        consensus_path = self._orchestra_dir / "consensus" / f"{spec_id}.json"
+        if consensus_path.exists():
+            try:
+                with open(consensus_path) as f:
+                    data["consensus"] = json.load(f)
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Failed to read consensus file %s: %s", consensus_path, e)
+        else:
+            logger.warning("Consensus file not found: %s", consensus_path)
+
+        readiness_path = self._orchestra_dir / "reports" / f"{spec_id}-readiness.json"
+        if readiness_path.exists():
+            try:
+                with open(readiness_path) as f:
+                    data["release_readiness"] = json.load(f)
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Failed to read readiness file %s: %s", readiness_path, e)
+        else:
+            logger.warning("Readiness file not found: %s — using defaults", readiness_path)
+
+        return data
+
+    def _format_markdown(self, data: dict) -> str:
+        """Render collected workflow data as a Markdown report.
+
+        Args:
+            data: Dict with keys spec_id, timestamp, agents, consensus, release_readiness.
+
+        Returns:
+            Markdown string for the final report.
+        """
+        spec_id = data.get("spec_id", "unknown")
+        timestamp = data.get("timestamp", datetime.now(timezone.utc).isoformat())
+        consensus = data.get("consensus") or {}
+        readiness = data.get("release_readiness") or {}
+        agents: list[dict] = data.get("agents") or []
+
+        final_decision = consensus.get("action", "N/A")
+        can_proceed = consensus.get("can_proceed", False)
+
+        lines: list[str] = []
+
+        # 1. Executive Summary
+        lines += [
+            "# Final Report",
+            "",
+            "## 1. Executive Summary",
+            "",
+            "| Field | Value |",
+            "| ----- | ----- |",
+            f"| Spec ID | `{spec_id}` |",
+            f"| Timestamp | {timestamp} |",
+            f"| Final Decision | **{final_decision.upper()}** |",
+            f"| Can Proceed | {'Yes' if can_proceed else 'No'} |",
+            "",
+        ]
+
+        # 2. Agent Contributions
+        lines += ["## 2. Agent Contributions", ""]
+        if agents:
+            lines += ["| Agent ID | Role | Primary Stages |", "| -------- | ---- | -------------- |"]
+            for agent in agents:
+                agent_id = agent.get("id", "unknown")
+                role = agent.get("role", "—")
+                primary = ", ".join(agent.get("primary_stages", []))
+                lines.append(f"| {agent_id} | {role} | {primary} |")
+        else:
+            lines.append("_No agent data available._")
+        lines.append("")
+
+        # 3. Consensus Result
+        lines += ["## 3. Consensus Result", ""]
+        if consensus:
+            ratio = consensus.get("ratio", 0.0)
+            re_review = consensus.get("re_review_count", 0)
+            vetoed_by = consensus.get("vetoed_by")
+            dispersion = consensus.get("dispersion_warning", False)
+
+            lines += [
+                f"- **Action:** {final_decision}",
+                f"- **Ratio:** {ratio:.2%}",
+                f"- **Re-review count:** {re_review}",
+            ]
+            if vetoed_by:
+                lines.append(f"- **Vetoed by:** {vetoed_by}")
+            if dispersion:
+                lines.append("- **Dispersion warning:** Yes — scores diverged significantly")
+
+            details: list[dict] = consensus.get("details", [])
+            if details:
+                lines += [
+                    "",
+                    "### Agent Votes",
+                    "",
+                    "| Agent | Score | Vote | Confidence | Effective Weight |",
+                    "| ----- | ----- | ---- | ---------- | ---------------- |",
+                ]
+                for d in details:
+                    lines.append(
+                        f"| {d.get('agent_id')} | {d.get('score')} | {d.get('vote')} "
+                        f"| {d.get('confidence')} | {d.get('effective_weight')} |"
+                    )
+        else:
+            lines.append("_No consensus data available._")
+        lines.append("")
+
+        # 4. Release Readiness
+        lines += ["## 4. Release Readiness", ""]
+        test_coverage = readiness.get("test_coverage", "N/A")
+        security_passed = readiness.get("security_scan_passed", False)
+        release_notes = readiness.get("release_notes_ready", False)
+        lines += [
+            f"- **Test Coverage:** {test_coverage}",
+            f"- **Security Scan Passed:** {'Yes' if security_passed else 'No'}",
+            f"- **Release Notes Ready:** {'Yes' if release_notes else 'No'}",
+            "",
+        ]
+
+        # 5. Recommendations
+        lines += ["## 5. Recommendations", ""]
+        recommendations: list[str] = []
+
+        if not can_proceed:
+            if final_decision == "escalate":
+                recommendations.append(
+                    "Human review is required — consensus could not be reached after maximum re-reviews."
+                )
+            else:
+                recommendations.append(
+                    "Address rework items identified by agents before proceeding."
+                )
+
+        if readiness:
+            if not readiness.get("security_scan_passed", True):
+                recommendations.append("Run security scan and resolve all findings before release.")
+            if not readiness.get("release_notes_ready", True):
+                recommendations.append("Prepare release notes before publishing.")
+            cov = readiness.get("test_coverage")
+            if isinstance(cov, (int, float)) and cov < 0.85:
+                recommendations.append(
+                    f"Increase test coverage to >= 85% (current: {cov:.0%})."
+                )
+
+        if consensus.get("dispersion_warning"):
+            recommendations.append(
+                "Investigate score dispersion — agents disagree significantly on quality."
+            )
+
+        if recommendations:
+            for rec in recommendations:
+                lines.append(f"- {rec}")
+        else:
+            lines.append("_No action required — all quality gates passed._")
+        lines.append("")
+
+        return "\n".join(lines)
 
 
 def create_final_report_issue(

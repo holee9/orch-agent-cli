@@ -1,0 +1,61 @@
+# orch-agent-cli configuration
+# Copy this file to target project root and customize
+
+orchestrator:
+  polling_interval_seconds: 60
+  max_retries: 3
+  timeout_minutes: 30
+  log_level: INFO
+
+github:
+  repo: ""  # Set to "owner/repo" format
+  token_env: "GITHUB_TOKEN"
+  labels:
+    agent_claude: "agent:claude"
+    agent_codex: "agent:codex"
+    agent_gemini: "agent:gemini"
+    status_open: "status:open"
+    status_claimed: "status:claimed"
+    status_in_progress: "status:in-progress"
+    status_review: "status:review"
+    status_done: "status:done"
+    status_blocked: "status:blocked"
+    type_analysis: "type:analysis"
+    type_design: "type:design"
+    type_implementation: "type:implementation"
+    type_review: "type:review"
+    type_testing: "type:testing"
+    type_release: "type:release"
+
+agents:
+  claude:
+    weight: 3
+    role: "architect-reviewer-release-manager"
+    cli_command: "claude"
+  codex:
+    weight: 2
+    role: "implementer-patch-generator"
+    cli_command: "codex"
+  gemini:
+    weight: 2
+    role: "tester-factchecker-red-team"
+    cli_command: "gemini"
+
+paths:
+  inbox: "inbox/"
+  orchestra: ".orchestra/"
+  assignments: ".orchestra/assignments/"
+  cache: ".orchestra/cache/"
+  locks: ".orchestra/locks/"
+  logs: ".orchestra/logs/"
+  reports: ".orchestra/reports/"
+
+consensus:
+  threshold: 0.5  # Weighted score threshold for approval
+  veto_enabled: true
+  min_votes_required: 2
+
+quality_gates:
+  min_test_coverage: 0.80
+  require_security_scan: true
+  require_release_notes: true

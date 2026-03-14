@@ -2,95 +2,122 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "release_readiness.schema.json",
   "title": "ReleaseReadiness",
-  "description": "Agent review report submitted during the consensus stage, capturing the agent's assessment of whether a task artifact is ready for release.",
+  "description": "Release readiness and consensus schema for multi-AI orchestration.",
   "type": "object",
-  "required": ["agent_id", "task_id", "timestamp", "score", "confidence", "vote", "blockers", "evidence"],
+  "required": [
+    "spec_id",
+    "version",
+    "timestamp",
+    "consensus_result",
+    "agent_votes",
+    "overall_score",
+    "veto_applied",
+    "test_coverage",
+    "security_scan_passed",
+    "release_notes_ready",
+    "final_decision"
+  ],
   "additionalProperties": false,
   "properties": {
-    "agent_id": {
+    "spec_id": {
       "type": "string",
-      "description": "Unique identifier of the reviewing agent."
+      "description": "Identifier of the specification being evaluated for release."
     },
-    "task_id": {
+    "version": {
       "type": "string",
-      "description": "ID of the task being reviewed.",
-      "pattern": "^task-[0-9]{3,}(-[a-z]+)?$"
+      "description": "Version string of the release candidate."
     },
     "timestamp": {
       "type": "string",
-      "description": "ISO 8601 timestamp when this review was submitted.",
-      "format": "date-time"
+      "format": "date-time",
+      "description": "Timestamp when the release readiness assessment was recorded."
     },
-    "score": {
-      "type": "integer",
-      "description": "Overall readiness score from 0 (completely unready) to 100 (fully ready).",
-      "minimum": 0,
-      "maximum": 100
+    "consensus_result": {
+      "type": "object",
+      "description": "Aggregated consensus outcome from all agent votes.",
+      "required": ["status", "score"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "Overall consensus decision.",
+          "enum": ["approved", "rejected", "escalated"]
+        },
+        "score": {
+          "type": "number",
+          "description": "Aggregated consensus score."
+        }
+      }
     },
-    "confidence": {
+    "agent_votes": {
+      "type": "array",
+      "description": "Individual votes from each participating agent.",
+      "items": {
+        "type": "object",
+        "required": ["agent_id", "vote", "weight", "rationale"],
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "Identity of the voting agent.",
+            "enum": ["claude", "codex", "gemini"]
+          },
+          "vote": {
+            "type": "string",
+            "description": "Agent's vote on release readiness.",
+            "enum": ["approve", "reject", "veto"]
+          },
+          "weight": {
+            "type": "integer",
+            "description": "Voting weight assigned to this agent."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Explanation for the agent's vote."
+          }
+        }
+      }
+    },
+    "overall_score": {
       "type": "number",
-      "description": "Agent's confidence in its own assessment, expressed as a value between 0.0 and 1.0.",
+      "description": "Weighted overall readiness score between 0 and 1.",
       "minimum": 0,
       "maximum": 1
     },
-    "vote": {
+    "veto_applied": {
+      "type": "boolean",
+      "description": "Whether a veto was applied by any agent."
+    },
+    "veto_reason": {
       "type": "string",
-      "description": "The agent's release vote. 'veto' overrides majority and blocks release regardless of ratio.",
-      "enum": ["ready", "not_ready", "veto"]
+      "description": "Reason for the veto. Required when veto_applied is true."
     },
-    "blockers": {
-      "type": "array",
-      "description": "List of issues blocking release. An empty array indicates no blockers.",
-      "items": {
-        "type": "object",
-        "description": "A specific issue that must be resolved before release.",
-        "required": ["severity", "description", "file_path", "suggested_fix"],
-        "additionalProperties": false,
-        "properties": {
-          "severity": {
-            "type": "string",
-            "description": "Impact level of this blocker.",
-            "enum": ["critical", "major", "minor"]
-          },
-          "description": {
-            "type": "string",
-            "description": "Human-readable explanation of the issue."
-          },
-          "file_path": {
-            "type": "string",
-            "description": "Relative path to the file containing the issue."
-          },
-          "suggested_fix": {
-            "type": "string",
-            "description": "Recommended action to resolve this blocker."
-          }
-        }
-      }
+    "test_coverage": {
+      "type": "number",
+      "description": "Test coverage ratio between 0 and 1.",
+      "minimum": 0,
+      "maximum": 1
     },
-    "evidence": {
-      "type": "array",
-      "description": "Supporting evidence for this review verdict.",
-      "items": {
-        "type": "object",
-        "description": "A single piece of evidence referenced by the agent.",
-        "required": ["type", "reference", "summary"],
-        "additionalProperties": false,
-        "properties": {
-          "type": {
-            "type": "string",
-            "description": "Category of evidence.",
-            "enum": ["test_result", "static_analysis", "manual_review", "coverage_report"]
-          },
-          "reference": {
-            "type": "string",
-            "description": "Path, URL, or identifier pointing to the evidence artifact."
-          },
-          "summary": {
-            "type": "string",
-            "description": "Brief summary of what this evidence shows."
-          }
-        }
-      }
+    "security_scan_passed": {
+      "type": "boolean",
+      "description": "Whether the security scan passed without critical findings."
+    },
+    "release_notes_ready": {
+      "type": "boolean",
+      "description": "Whether release notes have been prepared."
+    },
+    "final_decision": {
+      "type": "string",
+      "description": "Final release decision.",
+      "enum": ["release", "hold", "escalate_to_human"]
     }
+  },
+  "if": {
+    "properties": {
+      "veto_applied": { "const": true }
+    }
+  },
+  "then": {
+    "required": ["veto_reason"]
   }
 }
