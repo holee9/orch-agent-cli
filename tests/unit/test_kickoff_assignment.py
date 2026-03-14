@@ -208,3 +208,55 @@ def test_process_inbox_empty_inbox(tmp_path: Path) -> None:
     assert count == 0
     mock_brief.assert_not_called()
     orch.state.write_assignment.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests: path resolution with target_project_path
+# ---------------------------------------------------------------------------
+
+
+def test_inbox_dir_uses_target_project_path(tmp_path: Path) -> None:
+    """inbox_dir and archive_dir are resolved relative to target_project_path."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    config_path = config_dir / "config.yaml"
+    agents_path = config_dir / "agents.json"
+
+    target = tmp_path / "my-target-project"
+    config = {**MINIMAL_CONFIG}
+    config["orchestrator"] = {
+        **MINIMAL_CONFIG["orchestrator"],
+        "target_project_path": str(target),
+    }
+    config_path.write_text(yaml.dump(config))
+    agents_path.write_text(json.dumps(MINIMAL_AGENTS))
+
+    with (
+        patch("scripts.orchestrator.GitHubClient"),
+        patch("scripts.orchestrator.StateManager"),
+        patch("scripts.orchestrator.ConsensusEngine"),
+    ):
+        orch = Orchestrator(config_path=config_path, agents_path=agents_path)
+
+    assert orch.inbox_dir == target / "inbox/"
+    assert orch.archive_dir == target / "docs/briefs/"
+
+
+def test_inbox_dir_without_target_project_path(tmp_path: Path) -> None:
+    """When target_project_path is empty, paths are relative to CWD."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    config_path = config_dir / "config.yaml"
+    agents_path = config_dir / "agents.json"
+    config_path.write_text(yaml.dump(MINIMAL_CONFIG))
+    agents_path.write_text(json.dumps(MINIMAL_AGENTS))
+
+    with (
+        patch("scripts.orchestrator.GitHubClient"),
+        patch("scripts.orchestrator.StateManager"),
+        patch("scripts.orchestrator.ConsensusEngine"),
+    ):
+        orch = Orchestrator(config_path=config_path, agents_path=agents_path)
+
+    assert orch.inbox_dir == Path(".") / "inbox/"
+    assert orch.archive_dir == Path(".") / "docs/briefs/"

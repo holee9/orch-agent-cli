@@ -66,9 +66,10 @@ class Orchestrator:
             max_rereviews=self.config["consensus"]["max_rereviews"],
         )
 
-        # Resolve paths
-        self.inbox_dir = Path(self.config["orchestrator"]["inbox_dir"])
-        self.archive_dir = Path(self.config["orchestrator"]["brief_archive_dir"])
+        # Resolve paths — prefix with target_path when set
+        _base = Path(target_path) if target_path else Path(".")
+        self.inbox_dir = _base / self.config["orchestrator"]["inbox_dir"]
+        self.archive_dir = _base / self.config["orchestrator"]["brief_archive_dir"]
 
     def _load_config(self, config_path: str | Path) -> dict:
         """Load main configuration from YAML."""
@@ -112,7 +113,7 @@ class Orchestrator:
 
         logger.info("Orchestrator stopped.")
 
-    def _handle_shutdown(self, signum: int, _frame) -> None:
+    def _handle_shutdown(self, signum: int, _frame: object) -> None:
         """Handle shutdown signals gracefully."""
         logger.info("Received signal %d, shutting down...", signum)
         self.running = False
