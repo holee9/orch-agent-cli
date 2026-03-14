@@ -22,9 +22,10 @@ import yaml
 from scripts.brief_parser import process_brief, scan_inbox
 from scripts.consensus import ConsensusEngine
 from scripts.github_client import GitHubClient
-from scripts.report_generator import generate_report_markdown
+
 # TODO: integrate ReliabilityTracker.update() after each assignment completion
 from scripts.reliability_tracker import ReliabilityTracker  # noqa: F401
+from scripts.report_generator import generate_report_markdown
 from scripts.state_manager import StateManager
 from scripts.validate_schema import validate
 
@@ -67,7 +68,13 @@ def acquire_pid_lock(pid_file: Path = PID_FILE) -> None:
                     f"Orchestrator already running (PID {existing_pid})"
                 )
 
-    pid_file.write_text(str(os.getpid()))
+    try:
+        fd = os.open(str(pid_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        raise RuntimeError("Orchestrator already running") from None
+    else:
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
 
 
 def release_pid_lock(pid_file: Path = PID_FILE) -> None:
@@ -168,15 +175,20 @@ class Orchestrator:
         Returns:
             New list of agent dicts with ``available: bool`` added.
         """
-        result: list[dict] = []
-        for agent in agents:
-            agent_id = agent.get("id", "")
-            cli = agent.get("cli", "")
-            available = self._check_cli_available(cli)
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _check_one(agent: dict) -> dict:
+            available = self._check_cli_available(agent.get("cli", ""))
             if not available:
-                logger.warning("Agent %r: CLI %r unavailable", agent_id, cli)
-            result.append({**agent, "available": available})
-        return result
+                logger.warning(
+                    "Agent '%s' CLI '%s' is unavailable",
+                    agent.get("id", ""),
+                    agent.get("cli", ""),
+                )
+            return {**agent, "available": available}
+
+        with ThreadPoolExecutor() as executor:
+            return list(executor.map(_check_one, agents))
 
     def start(self) -> None:
         """Start the orchestrator daemon."""
@@ -296,7 +308,10 @@ class Orchestrator:
             },
         }
         self.state.write_assignment(kickoff_agent, assignment)
-        logger.info("Created kickoff assignment: %s -> %s (Issue #%d)", kickoff_agent, task_id, issue_number)
+        logger.info(
+            "Created kickoff assignment: %s -> %s (Issue #%d)",
+            kickoff_agent, task_id, issue_number,
+        )
         self._create_task_branch(task_id)
 
     def _create_task_branch(self, task_id: str) -> None:
@@ -410,7 +425,9 @@ class Orchestrator:
         next_stage = self._get_next_stage(current_stage)
 
         if next_stage:
-            next_agent = self._get_primary_agent(next_stage) or self._get_secondary_agent(next_stage)
+            next_agent = (
+                self._get_primary_agent(next_stage) or self._get_secondary_agent(next_stage)
+            )
             if next_agent:
                 self.state.write_assignment(next_agent, {
                     "agent_id": next_agent,
@@ -538,7 +555,10 @@ class Orchestrator:
                         issue_number, add=["consensus:pass"], remove=["status:review-needed"]
                     )
                     # Advance to release stage
-                    release_agent = self._get_primary_agent("release") or self._get_secondary_agent("release")
+                    release_agent = (
+                        self._get_primary_agent("release")
+                        or self._get_secondary_agent("release")
+                    )
                     if release_agent:
                         consensus_agent = review_task_agents.get(task_id)
                         self.state.write_assignment(release_agent, {
@@ -547,12 +567,17 @@ class Orchestrator:
                             "stage": "release",
                             "github_issue_number": issue_number,
                             "assigned_at": datetime.now(timezone.utc).isoformat(),
-                            "timeout_minutes": self.config["orchestrator"]["assignment_timeout_minutes"],
+                            "timeout_minutes": self.config["orchestrator"][
+                                "assignment_timeout_minutes"
+                            ],
                             "context": {
                                 "consensus": result.to_dict(),
                             },
                         })
-                        logger.info("Advanced %s: consensus -> release (agent: %s)", task_id, release_agent)
+                        logger.info(
+                            "Advanced %s: consensus -> release (agent: %s)",
+                            task_id, release_agent,
+                        )
                 elif result.action == "escalate":
                     self.github.update_labels(
                         issue_number, add=["escalation:human"], remove=["status:review-needed"]

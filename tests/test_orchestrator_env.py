@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -299,7 +299,9 @@ def test_init_agents_json_not_modified(tmp_path: Path) -> None:
     assert agents_path.read_bytes() == original_content
 
 
-def test_init_logs_warning_for_unavailable_agent(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_init_logs_warning_for_unavailable_agent(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     """Orchestrator.__init__ logs WARNING for each agent whose CLI is unavailable."""
     import logging
 
@@ -384,7 +386,8 @@ def test_create_task_branch_skips_if_not_git_repo(
         orc._create_task_branch("TASK-001")
 
     mock_run.assert_not_called()
-    assert any("not a git repo" in msg.lower() or "git" in msg.lower() for msg in [r.message for r in caplog.records])
+    messages = [r.message for r in caplog.records]
+    assert any("not a git repo" in msg.lower() or "git" in msg.lower() for msg in messages)
 
 
 def test_create_task_branch_warns_on_already_exists(
