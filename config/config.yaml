@@ -1,0 +1,27 @@
+github:
+  repo: ""  # Set via env GITHUB_REPO or here
+  polling_interval_seconds: 60
+  mention_user: ""  # @mention in Final Report
+
+orchestrator:
+  target_project_path: ""  # Set via env TARGET_PROJECT_PATH or here
+  inbox_dir: "inbox/"
+  brief_archive_dir: "docs/briefs/"
+  orchestra_dir: ".orchestra/"
+  assignment_timeout_minutes: 30
+  max_retries: 3
+
+consensus:
+  threshold: 0.9
+  score_ready_min: 90
+  dispersion_alert_threshold: 20
+  max_rereviews: 2
+
+quality:
+  enforce_english_comments: true
+  validate_schemas: true
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+  file: ".orchestra/logs/orchestrator.log"

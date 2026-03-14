@@ -1,0 +1,43 @@
+{
+  "agents": [
+    {
+      "id": "claude",
+      "cli_command": "claude",
+      "display_name": "Claude Code",
+      "base_weight": 0.40,
+      "reliability": 1.0,
+      "primary_stages": ["kickoff", "requirements", "planning", "review", "release"],
+      "secondary_stages": ["consensus"],
+      "can_modify": ["docs/specs/", "docs/plans/", "docs/release-notes/", ".orchestra/tasks/", "CHANGELOG.md"],
+      "cannot_modify": ["src/", "tests/"],
+      "can_veto": false,
+      "sandbox_mode": null
+    },
+    {
+      "id": "codex",
+      "cli_command": "codex",
+      "display_name": "Codex CLI",
+      "base_weight": 0.35,
+      "reliability": 1.0,
+      "primary_stages": ["implementation"],
+      "secondary_stages": ["testing"],
+      "can_modify": ["src/", "tests/"],
+      "cannot_modify": ["docs/specs/", "docs/plans/", ".orchestra/config/"],
+      "can_veto": false,
+      "sandbox_mode": "workspace-write"
+    },
+    {
+      "id": "gemini",
+      "cli_command": "gemini",
+      "display_name": "Gemini CLI",
+      "base_weight": 0.25,
+      "reliability": 1.0,
+      "primary_stages": ["testing"],
+      "secondary_stages": ["requirements", "review"],
+      "can_modify": ["tests/"],
+      "cannot_modify": ["src/", "docs/specs/", "docs/plans/", ".orchestra/config/"],
+      "can_veto": true,
+      "sandbox_mode": null
+    }
+  ]
+}

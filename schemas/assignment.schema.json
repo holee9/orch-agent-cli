@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "assignment.schema.json",
+  "title": "Assignment",
+  "description": "Describes a work assignment dispatched to a specific agent, including the task context, stage, and execution constraints.",
+  "type": "object",
+  "required": ["agent_id", "task_id", "stage", "github_issue_number", "assigned_at"],
+  "additionalProperties": false,
+  "properties": {
+    "agent_id": {
+      "type": "string",
+      "description": "Unique identifier of the agent receiving the assignment."
+    },
+    "task_id": {
+      "type": "string",
+      "description": "ID of the task being assigned.",
+      "pattern": "^task-[0-9]{3,}(-[a-z]+)?$"
+    },
+    "stage": {
+      "type": "string",
+      "description": "Lifecycle stage at which the agent is being assigned.",
+      "enum": [
+        "kickoff",
+        "requirements",
+        "planning",
+        "implementation",
+        "review",
+        "testing",
+        "consensus",
+        "release",
+        "final-report"
+      ]
+    },
+    "github_issue_number": {
+      "type": "integer",
+      "description": "GitHub issue number associated with this assignment.",
+      "minimum": 1
+    },
+    "assigned_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp when the assignment was dispatched.",
+      "format": "date-time"
+    },
+    "timeout_minutes": {
+      "type": "integer",
+      "description": "Maximum number of minutes the agent has to complete the assignment before it is considered timed out.",
+      "default": 30,
+      "minimum": 1
+    },
+    "context": {
+      "type": "object",
+      "description": "Supplementary context provided to the agent to carry out the assignment.",
+      "additionalProperties": false,
+      "properties": {
+        "spec_path": {
+          "type": "string",
+          "description": "Relative path to the specification document for this task."
+        },
+        "plan_path": {
+          "type": "string",
+          "description": "Relative path to the implementation plan document."
+        },
+        "branch_name": {
+          "type": "string",
+          "description": "Git branch the agent should work on."
+        },
+        "previous_reviews": {
+          "type": "array",
+          "description": "Paths or identifiers of prior review reports relevant to this assignment.",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

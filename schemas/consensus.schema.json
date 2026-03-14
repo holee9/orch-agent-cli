@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "consensus.schema.json",
+  "title": "Consensus",
+  "description": "Aggregated consensus result computed from all agent release-readiness votes for a given task. Determines whether the task may proceed to the next stage.",
+  "type": "object",
+  "required": ["task_id", "can_proceed", "ratio", "action", "details", "re_review_count", "computed_at"],
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "ID of the task for which consensus was computed.",
+      "pattern": "^task-[0-9]{3,}(-[a-z]+)?$"
+    },
+    "can_proceed": {
+      "type": "boolean",
+      "description": "Whether the task is cleared to advance to the next lifecycle stage based on the aggregated votes."
+    },
+    "ratio": {
+      "type": "number",
+      "description": "Weighted approval ratio between 0.0 (no approval) and 1.0 (unanimous approval), computed from effective weights of ready votes.",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "action": {
+      "type": "string",
+      "description": "Recommended action derived from the consensus result. 'proceed' advances the task, 'rework' returns it for revision, 'escalate' routes to human oversight.",
+      "enum": ["proceed", "rework", "escalate"]
+    },
+    "details": {
+      "type": "array",
+      "description": "Per-agent breakdown of votes contributing to this consensus.",
+      "items": {
+        "type": "object",
+        "description": "Individual agent vote detail used in the consensus computation.",
+        "required": ["agent_id", "score", "vote", "confidence", "effective_weight"],
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "Unique identifier of the voting agent."
+          },
+          "score": {
+            "type": "integer",
+            "description": "Readiness score submitted by this agent (0-100).",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "vote": {
+            "type": "string",
+            "description": "Release vote cast by this agent.",
+            "enum": ["ready", "not_ready", "veto"]
+          },
+          "confidence": {
+            "type": "number",
+            "description": "Confidence level reported by this agent (0.0-1.0).",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "effective_weight": {
+            "type": "number",
+            "description": "Weight applied to this agent's vote in the final ratio computation, accounting for confidence and role-based adjustments."
+          }
+        }
+      }
+    },
+    "re_review_count": {
+      "type": "integer",
+      "description": "Number of re-review cycles completed for this task prior to this consensus result.",
+      "minimum": 0
+    },
+    "computed_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp when this consensus result was computed.",
+      "format": "date-time"
+    }
+  }
+}

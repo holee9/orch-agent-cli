@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "release_readiness.schema.json",
+  "title": "ReleaseReadiness",
+  "description": "Agent review report submitted during the consensus stage, capturing the agent's assessment of whether a task artifact is ready for release.",
+  "type": "object",
+  "required": ["agent_id", "task_id", "timestamp", "score", "confidence", "vote", "blockers", "evidence"],
+  "additionalProperties": false,
+  "properties": {
+    "agent_id": {
+      "type": "string",
+      "description": "Unique identifier of the reviewing agent."
+    },
+    "task_id": {
+      "type": "string",
+      "description": "ID of the task being reviewed.",
+      "pattern": "^task-[0-9]{3,}(-[a-z]+)?$"
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "ISO 8601 timestamp when this review was submitted.",
+      "format": "date-time"
+    },
+    "score": {
+      "type": "integer",
+      "description": "Overall readiness score from 0 (completely unready) to 100 (fully ready).",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "confidence": {
+      "type": "number",
+      "description": "Agent's confidence in its own assessment, expressed as a value between 0.0 and 1.0.",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "vote": {
+      "type": "string",
+      "description": "The agent's release vote. 'veto' overrides majority and blocks release regardless of ratio.",
+      "enum": ["ready", "not_ready", "veto"]
+    },
+    "blockers": {
+      "type": "array",
+      "description": "List of issues blocking release. An empty array indicates no blockers.",
+      "items": {
+        "type": "object",
+        "description": "A specific issue that must be resolved before release.",
+        "required": ["severity", "description", "file_path", "suggested_fix"],
+        "additionalProperties": false,
+        "properties": {
+          "severity": {
+            "type": "string",
+            "description": "Impact level of this blocker.",
+            "enum": ["critical", "major", "minor"]
+          },
+          "description": {
+            "type": "string",
+            "description": "Human-readable explanation of the issue."
+          },
+          "file_path": {
+            "type": "string",
+            "description": "Relative path to the file containing the issue."
+          },
+          "suggested_fix": {
+            "type": "string",
+            "description": "Recommended action to resolve this blocker."
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "description": "Supporting evidence for this review verdict.",
+      "items": {
+        "type": "object",
+        "description": "A single piece of evidence referenced by the agent.",
+        "required": ["type", "reference", "summary"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Category of evidence.",
+            "enum": ["test_result", "static_analysis", "manual_review", "coverage_report"]
+          },
+          "reference": {
+            "type": "string",
+            "description": "Path, URL, or identifier pointing to the evidence artifact."
+          },
+          "summary": {
+            "type": "string",
+            "description": "Brief summary of what this evidence shows."
+          }
+        }
+      }
+    }
+  }
+}
