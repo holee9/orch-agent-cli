@@ -1,10 +1,10 @@
 github:
-  repo: ""  # Set via env GITHUB_REPO or here
+  repo: "holee9/orch-test-target"  # Set via env GITHUB_REPO or here
   polling_interval_seconds: 60
   mention_user: ""  # @mention in Final Report
 
 orchestrator:
-  target_project_path: ""  # Set via env TARGET_PROJECT_PATH or here
+  target_project_path: "/Volumes/project/orch-test-target"  # Set via env TARGET_PROJECT_PATH or here
   inbox_dir: "inbox/"
   brief_archive_dir: "docs/briefs/"
   orchestra_dir: ".orchestra/"
