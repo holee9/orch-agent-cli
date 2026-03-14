@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import signal
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -84,7 +85,7 @@ class Orchestrator:
     ):
         self.config = self._load_config(config_path)
         self._agents_path = Path(agents_path) if agents_path else Path("config/agents.json")
-        self.agents = self._load_agents()
+        self.agents = self.check_agent_availability(self._load_agents())
         self.running = False
 
         # Initialize components
@@ -132,6 +133,51 @@ class Orchestrator:
             data = json.load(f)
         return data["agents"]
 
+    # --- CLI availability (D-004) ---
+
+    def _check_cli_available(self, cli: str) -> bool:
+        """Check whether a CLI binary is available by running `cli --version`.
+
+        Args:
+            cli: The CLI binary name (e.g. "claude", "codex").
+
+        Returns:
+            True if the command exits with code 0, False otherwise.
+        """
+        try:
+            result = subprocess.run(
+                [cli, "--version"],
+                capture_output=True,
+                timeout=5,
+            )
+            return result.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+
+    def check_agent_availability(self, agents: list[dict]) -> list[dict]:
+        """Check CLI availability for each agent and return updated agent list.
+
+        Each returned dict is a shallow copy of the original with an added
+        ``available`` key. The original dicts are NOT mutated.
+        Logs a WARNING for every agent whose CLI is unavailable.
+
+        Args:
+            agents: List of agent config dicts, each containing at least
+                    ``id`` and ``cli`` fields.
+
+        Returns:
+            New list of agent dicts with ``available: bool`` added.
+        """
+        result: list[dict] = []
+        for agent in agents:
+            agent_id = agent.get("id", "")
+            cli = agent.get("cli", "")
+            available = self._check_cli_available(cli)
+            if not available:
+                logger.warning("Agent %r: CLI %r unavailable", agent_id, cli)
+            result.append({**agent, "available": available})
+        return result
+
     def start(self) -> None:
         """Start the orchestrator daemon."""
         acquire_pid_lock(PID_FILE)
@@ -176,8 +222,11 @@ class Orchestrator:
     def _reload_agents_config(self, force_log: bool = False) -> None:
         """Reload agents.json from disk. Logs when content changed or force_log is True."""
         new_agents = self._load_agents()
-        changed = new_agents != self.agents
-        self.agents = new_agents
+        # Strip runtime-only 'available' key before comparing to avoid false positives
+        def _strip_runtime(agents: list[dict]) -> list[dict]:
+            return [{k: v for k, v in a.items() if k != "available"} for a in agents]
+        changed = _strip_runtime(new_agents) != _strip_runtime(self.agents)
+        self.agents = self.check_agent_availability(new_agents)
         if force_log or changed:
             msg = "agents config reloaded via SIGHUP" if force_log else "agents config reloaded"
             logger.info(msg)
@@ -248,6 +297,58 @@ class Orchestrator:
         }
         self.state.write_assignment(kickoff_agent, assignment)
         logger.info("Created kickoff assignment: %s -> %s (Issue #%d)", kickoff_agent, task_id, issue_number)
+        self._create_task_branch(task_id)
+
+    def _create_task_branch(self, task_id: str) -> None:
+        """Create a git branch for the given task in the target project path.
+
+        Branch name: ``feat/<task_id>``.
+        Skips with WARNING if the target path is not a git repository.
+        Logs WARNING (without raising) for all git errors.
+
+        Args:
+            task_id: The task identifier, e.g. "TASK-042".
+        """
+        target_path_str = self.config["orchestrator"].get("target_project_path", "")
+        if not target_path_str:
+            logger.warning("_create_task_branch: target_project_path not set, skipping")
+            return
+
+        target = Path(target_path_str)
+        if not (target / ".git").exists():
+            logger.warning(
+                "_create_task_branch: %s is not a git repo, skipping branch creation for %s",
+                target,
+                task_id,
+            )
+            return
+
+        branch = f"feat/{task_id}"
+        try:
+            result = subprocess.run(
+                ["git", "switch", "-c", branch],
+                cwd=target,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode != 0:
+                stderr: str = result.stderr
+                if "already exists" in stderr:
+                    logger.warning(
+                        "_create_task_branch: branch %r already exists for %s", branch, task_id
+                    )
+                else:
+                    logger.warning(
+                        "_create_task_branch: git switch failed for %s (rc=%d): %s",
+                        task_id,
+                        result.returncode,
+                        stderr.strip(),
+                    )
+        except Exception:
+            logger.warning(
+                "_create_task_branch: unexpected error creating branch for %s", task_id
+            )
 
     # --- Phase 2: GitHub Sync ---
 
