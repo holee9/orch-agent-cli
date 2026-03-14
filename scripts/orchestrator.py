@@ -29,6 +29,50 @@ from scripts.validate_schema import validate
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# PID lock file
+# ---------------------------------------------------------------------------
+
+# @MX:NOTE: [AUTO] Global PID file path; override in tests via monkeypatch
+PID_FILE = Path("/tmp/orchestrator.pid")
+
+
+# @MX:ANCHOR: [AUTO] Called at daemon startup; must not allow two concurrent instances
+# @MX:REASON: [AUTO] Prevents split-brain: two daemons writing conflicting state to .orchestra/
+def acquire_pid_lock(pid_file: Path = PID_FILE) -> None:
+    """Check/write PID lock. Raises RuntimeError if another instance is running.
+
+    Stale PID files (process no longer alive) are removed automatically.
+    """
+    if pid_file.exists():
+        try:
+            existing_pid = int(pid_file.read_text().strip())
+        except ValueError:
+            pid_file.unlink(missing_ok=True)
+        else:
+            # Check whether that process is still alive
+            try:
+                os.kill(existing_pid, 0)
+            except ProcessLookupError:
+                # Process is gone — stale file, remove it
+                pid_file.unlink(missing_ok=True)
+            except PermissionError:
+                # Process exists but we lack permission to signal it
+                raise RuntimeError(
+                    f"Orchestrator already running (PID {existing_pid})"
+                ) from None
+            else:
+                raise RuntimeError(
+                    f"Orchestrator already running (PID {existing_pid})"
+                )
+
+    pid_file.write_text(str(os.getpid()))
+
+
+def release_pid_lock(pid_file: Path = PID_FILE) -> None:
+    """Remove PID file on exit. Safe to call even if the file is absent."""
+    pid_file.unlink(missing_ok=True)
+
 
 class Orchestrator:
     """Central daemon that coordinates multi-AI agent workflow."""
@@ -90,36 +134,57 @@ class Orchestrator:
 
     def start(self) -> None:
         """Start the orchestrator daemon."""
-        self.running = True
-        signal.signal(signal.SIGINT, self._handle_shutdown)
-        signal.signal(signal.SIGTERM, self._handle_shutdown)
+        acquire_pid_lock(PID_FILE)
+        try:
+            self.running = True
+            signal.signal(signal.SIGINT, self._handle_shutdown)
+            signal.signal(signal.SIGTERM, self._handle_shutdown)
+            signal.signal(signal.SIGHUP, self._handle_sighup)
 
-        self.state.ensure_directories()
-        interval = self.config["github"]["polling_interval_seconds"]
+            self.state.ensure_directories()
+            interval = self.config["github"]["polling_interval_seconds"]
 
-        logger.info("Orchestrator started. Polling every %ds.", interval)
-        logger.info("Inbox: %s | Orchestra: %s", self.inbox_dir, self.state.base_dir)
+            logger.info("Orchestrator started. Polling every %ds.", interval)
+            logger.info("Inbox: %s | Orchestra: %s", self.inbox_dir, self.state.base_dir)
 
-        while self.running:
-            try:
-                self.poll_cycle()
-            except KeyboardInterrupt:
-                break
-            except Exception:
-                logger.exception("Error in poll cycle")
+            while self.running:
+                try:
+                    self.poll_cycle()
+                except KeyboardInterrupt:
+                    break
+                except Exception:
+                    logger.exception("Error in poll cycle")
 
-            if self.running:
-                time.sleep(interval)
+                if self.running:
+                    time.sleep(interval)
 
-        logger.info("Orchestrator stopped.")
+            logger.info("Orchestrator stopped.")
+        finally:
+            release_pid_lock(PID_FILE)
 
     def _handle_shutdown(self, signum: int, _frame: object) -> None:
         """Handle shutdown signals gracefully."""
         logger.info("Received signal %d, shutting down...", signum)
+        # PID file released by the finally block in start()
         self.running = False
+
+    def _handle_sighup(self, signum: int, _frame: object) -> None:
+        """Handle SIGHUP: reload agents config immediately."""
+        logger.info("Received SIGHUP, reloading agents config...")
+        self._reload_agents_config(force_log=True)
+
+    def _reload_agents_config(self, force_log: bool = False) -> None:
+        """Reload agents.json from disk. Logs when content changed or force_log is True."""
+        new_agents = self._load_agents()
+        changed = new_agents != self.agents
+        self.agents = new_agents
+        if force_log or changed:
+            msg = "agents config reloaded via SIGHUP" if force_log else "agents config reloaded"
+            logger.info(msg)
 
     def poll_cycle(self) -> dict:
         """Execute one complete polling cycle. Returns a summary dict."""
+        self._reload_agents_config()
         summary = {
             "briefs_processed": 0,
             "issues_synced": 0,
@@ -553,10 +618,12 @@ def main() -> None:
     """CLI entry point for the orchestrator."""
     config_path = sys.argv[1] if len(sys.argv) > 1 else "config/config.yaml"
 
-    # Setup logging
+    # Setup logging with UTC timestamps (AC-006)
+    logging.Formatter.converter = time.gmtime
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%SZ",
     )
 
     try:
