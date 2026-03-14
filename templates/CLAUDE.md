@@ -12,7 +12,7 @@ Claude Code agent specialized in specification, review, decomposition, release m
 
 ## Core Protocol
 
-Follow @/Volumes/project/orch-agent-cli/templates/AGENTS.md for all communication, GitHub commenting, reporting, and prohibitions.
+Follow @AGENTS.md for all communication, GitHub commenting, reporting, and prohibitions.
 
 Poll `.orchestra/state/assigned/claude.json` every 90 seconds with jitter (60-120s range).
 
