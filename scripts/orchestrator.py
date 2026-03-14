@@ -152,9 +152,36 @@ class Orchestrator:
             try:
                 issue_num = process_brief(brief_path, self.github, self.archive_dir)
                 logger.info("Processed BRIEF -> Issue #%d", issue_num)
+                self._create_kickoff_assignment(issue_num)
             except Exception:
                 logger.exception("Failed to process BRIEF: %s", brief_path)
         return len(briefs)
+
+    def _create_kickoff_assignment(self, issue_number: int) -> None:
+        """Write initial kickoff assignment for the primary kickoff agent."""
+        kickoff_agent = self._get_primary_agent("kickoff")
+        if not kickoff_agent:
+            logger.warning("No primary agent found for kickoff stage")
+            return
+
+        task_id = f"TASK-{issue_number:03d}"
+        assignment = {
+            "agent_id": kickoff_agent,
+            "task_id": task_id,
+            "stage": "kickoff",
+            "action": "analyze",
+            "github_issue_number": issue_number,
+            "assigned_at": datetime.now(timezone.utc).isoformat(),
+            "deadline": None,
+            "timeout_minutes": self.config["orchestrator"]["assignment_timeout_minutes"],
+            "context": {
+                "spec_path": f"docs/specs/SPEC-{issue_number:03d}.md",
+                "plan_path": f"docs/plans/PLAN-{issue_number:03d}.md",
+                "branch_name": f"feat/{task_id}",
+            },
+        }
+        self.state.write_assignment(kickoff_agent, assignment)
+        logger.info("Created kickoff assignment: %s -> %s (Issue #%d)", kickoff_agent, task_id, issue_number)
 
     # --- Phase 2: GitHub Sync ---
 
@@ -282,7 +309,7 @@ class Orchestrator:
 
         # Find tasks in review stage
         review_tasks: dict[str, int] = {}
-        for _agent_id, assignment in assignments.items():
+        for _, assignment in assignments.items():
             if assignment.get("stage") == "review":
                 task_id = assignment.get("task_id", "")
                 if task_id:
