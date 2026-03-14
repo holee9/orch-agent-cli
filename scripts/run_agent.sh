@@ -38,13 +38,6 @@ if ! command -v "$CLI_CMD" &>/dev/null; then
   exit 1
 fi
 
-# claude -p (headless) requires ANTHROPIC_API_KEY; OAuth session is interactive-only
-if [ "$AGENT_ID" = "claude" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  echo "ERROR: ANTHROPIC_API_KEY is not set." >&2
-  echo "  claude -p (non-interactive) requires an API key." >&2
-  echo "  Export it before running: export ANTHROPIC_API_KEY=sk-ant-..." >&2
-  exit 1
-fi
 
 log "Agent runner started. Target: $TARGET_DIR"
 log "Polling $ASSIGNMENT_FILE every ${POLL_INTERVAL}s (+0..${JITTER}s jitter)"
