@@ -63,8 +63,8 @@ while true; do
 
     log "Assignment detected: $TASK_ID (stage=$STAGE, issue=#$ISSUE_NUM)"
 
-    # Build role-specific prompt
-    ROLE_FILE="${AGENT_ID^^}.md"
+    # Build role-specific prompt (Bash 3.2 compatible uppercase)
+    ROLE_FILE="$(echo "$AGENT_ID" | tr '[:lower:]' '[:upper:]').md"
     if [ ! -f "$ROLE_FILE" ]; then
       ROLE_FILE="AGENTS.md"
     fi
