@@ -238,8 +238,8 @@ git init && git remote add origin https://github.com/your-org/my-target-project.
 # orch-agent-cli 설치 (에이전트 파일 + .orchestra/ 구조 자동 생성)
 bash /path/to/orch-agent-cli/templates/setup.sh /path/to/my-target-project
 
-# GitHub 라벨 자동 생성
-cd /path/to/orch-agent-cli
+# GitHub 라벨 자동 생성 (8개 필수 라벨)
+cd /path/to/orch-agent-cli && python3 scripts/setup_labels.py your-org/my-target-project
 ```
 
 > `setup.sh`가 AGENTS.md, CLAUDE.md, CODEX.md, GEMINI.md, .orchestra/, inbox/ 를 target 프로젝트에 복사합니다.
@@ -348,7 +348,7 @@ bash /path/to/orch-agent-cli/scripts/run_agent.sh gemini /path/to/my-target-proj
 ```bash
 cd /path/to/orch-agent-cli
 source .venv/bin/activate
-python -m scripts.orchestrator
+python3 -m scripts.orchestrator
 ```
 
 출력 예시:
@@ -362,32 +362,74 @@ INFO: Wrote assignment for claude: task TASK-001
 
 T1이 BRIEF를 감지하면 GitHub Issue를 생성하고 `.orchestra/state/assigned/claude.json`을 자동 생성합니다. T2의 러너가 이 파일을 감지해 Claude를 headless 모드(`claude -p`)로 실행합니다. 이후 완료 신호를 T1이 받아 다음 에이전트(codex → gemini)에게 자동 연결됩니다.
 
-#### 전체 자동 흐름
+#### T1 오케스트레이터 체인 동작 원리
+
+T1은 60초마다 `poll_cycle()`을 실행합니다. 완료 신호를 감지하면 아래 순서로 다음 에이전트에게 자동 할당합니다:
 
 ```
-T1: BRIEF 감지 → GitHub Issue 생성 → claude.json 생성
-T2: claude.json 감지 → claude -p "..." 자동 실행 → 완료 신호 기록
-T1: 완료 신호 감지 → codex.json 생성
-T3: codex.json 감지 → codex exec "..." 자동 실행 → 완료 신호 기록
-T1: 완료 신호 감지 → gemini.json 생성 (리뷰 단계)
-T4: gemini.json 감지 → gemini -p "..." 자동 실행 → 완료 신호 기록
-T1: 합의 계산 → Final Report GitHub Issue 생성
+스테이지 순서 (orchestrator.py 내장):
+kickoff → requirements → planning → implementation → review → testing → consensus → release → final-report
+
+에이전트 담당 스테이지 (config/agents.json):
+claude  : kickoff, requirements, planning, review, release
+codex   : implementation
+gemini  : testing
 ```
 
-사람이 개입하는 시점: **BRIEF 파일 작성(시작)** + **Final Report 확인 및 PR 머지(완료)**
+실제 흐름:
+```
+BRIEF 투입
+  → T1: kickoff 할당 → claude.json 생성
+  → T2: claude 실행 (SPEC 작성) → completed/claude-TASK-001.json
+  → T1: requirements 할당 → claude.json 생성
+  → T2: claude 실행 (요구사항 정제) → completed/claude-TASK-001.json
+  → T1: planning 할당 → claude.json 생성
+  → T2: claude 실행 (PLAN 작성) → completed/claude-TASK-001.json
+  → T1: implementation 할당 → codex.json 생성
+  → T3: codex 실행 (코드 구현) → completed/codex-TASK-001.json
+  → T1: review 할당 → claude.json 생성
+  → T2: claude 실행 (코드 리뷰) → ...
+  → T1: testing 할당 → gemini.json 생성
+  → T4: gemini 실행 (테스트·검증) → ...
+  → T1: consensus → release → final-report 처리
+  → GitHub Final Report Issue 생성
+```
+
+사람이 개입하는 시점: **BRIEF 작성(시작)** + **Final Report 확인 및 PR 머지(완료)**
+
+#### 상태 초기화 (재시작 시)
+
+이전 실행 잔여물이 있을 경우 깨끗하게 정리 후 시작합니다:
+
+```bash
+TARGET=/path/to/my-target-project
+
+# 할당 및 완료 신호 초기화
+rm -f "$TARGET/.orchestra/state/assigned/"*.json
+rm -f "$TARGET/.orchestra/state/completed/"*.json
+
+# 확인
+ls "$TARGET/.orchestra/state/assigned/"   # 비어있어야 함
+ls "$TARGET/.orchestra/state/completed/"  # 비어있어야 함
+```
+
+> **주의:** 진행 중인 실제 작업이 있다면 삭제하지 마세요. 테스트 후 재시작 용도입니다.
 
 #### 모니터링
 
-실행 중 진행 상황은 다음에서 확인합니다:
-
 ```bash
-# 에이전트별 로그
+# 실시간 에이전트 로그 (T2~T4 터미널에서 확인)
 tail -f /path/to/my-target-project/.orchestra/logs/claude.log
+tail -f /path/to/my-target-project/.orchestra/logs/codex.log
+tail -f /path/to/my-target-project/.orchestra/logs/gemini.log
 
-# 현재 할당 상태
-cat /path/to/my-target-project/.orchestra/state/assigned/*.json 2>/dev/null
+# 현재 할당 상태 (T1이 무엇을 배분했는지)
+ls /path/to/my-target-project/.orchestra/state/assigned/
 
-# GitHub Issues
+# 완료된 작업 확인
+ls /path/to/my-target-project/.orchestra/state/completed/
+
+# GitHub Issues 진행 상황
 gh issue list --repo your-org/my-target-project
 ```
 
