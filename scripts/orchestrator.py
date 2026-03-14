@@ -215,26 +215,36 @@ class Orchestrator:
             agent_id = completion.get("agent_id", "")
             task_id = completion.get("task_id", "")
             try:
-                self._advance_workflow(agent_id, task_id, completion)
-                self.state.clear_assignment(agent_id)
+                next_agent = self._advance_workflow(agent_id, task_id, completion)
+                # If next stage uses the same agent, its assignment was already
+                # overwritten by _advance_workflow — do NOT clear it again.
+                if next_agent != agent_id:
+                    self.state.clear_assignment(agent_id)
                 self.state.clear_completion(agent_id, task_id)
                 processed += 1
             except Exception:
                 logger.exception("Failed to process completion: %s/%s", agent_id, task_id)
         return processed
 
-    def _advance_workflow(self, agent_id: str, task_id: str, completion: dict) -> None:
-        """Determine next stage and create assignment based on completion."""
+    def _advance_workflow(self, agent_id: str, task_id: str, completion: dict) -> str | None:
+        """Determine next stage and create assignment based on completion. Returns next agent id."""
         assignment = self.state.read_assignment(agent_id)
         if not assignment:
             logger.warning("No assignment found for completed %s/%s", agent_id, task_id)
+            return
+
+        if completion.get("status") == "error":
+            logger.warning(
+                "Agent %s reported error for task %s, not advancing workflow",
+                agent_id, task_id,
+            )
             return
 
         current_stage = assignment.get("stage", "")
         next_stage = self._get_next_stage(current_stage)
 
         if next_stage:
-            next_agent = self._get_primary_agent(next_stage)
+            next_agent = self._get_primary_agent(next_stage) or self._get_secondary_agent(next_stage)
             if next_agent:
                 self.state.write_assignment(next_agent, {
                     "agent_id": next_agent,
@@ -253,6 +263,8 @@ class Orchestrator:
                     "Advanced %s: %s -> %s (agent: %s)",
                     task_id, current_stage, next_stage, next_agent,
                 )
+                return next_agent
+        return None
 
     def _get_next_stage(self, current: str) -> str | None:
         """Get the next stage in the workflow."""
@@ -270,6 +282,13 @@ class Orchestrator:
         """Find the primary agent for a given stage."""
         for agent in self.agents:
             if stage in agent.get("primary_stages", []):
+                return agent["id"]
+        return None
+
+    def _get_secondary_agent(self, stage: str) -> str | None:
+        """Find the secondary agent for a given stage (fallback when no primary exists)."""
+        for agent in self.agents:
+            if stage in agent.get("secondary_stages", []):
                 return agent["id"]
         return None
 
@@ -308,13 +327,15 @@ class Orchestrator:
         triggered = 0
         assignments = self.state.list_assignments()
 
-        # Find tasks in review stage
+        # Find tasks in review or consensus stage
         review_tasks: dict[str, int] = {}
-        for _, assignment in assignments.items():
-            if assignment.get("stage") == "review":
+        review_task_agents: dict[str, str] = {}  # task_id -> agent_id
+        for agent_id, assignment in assignments.items():
+            if assignment.get("stage") in ("review", "consensus"):
                 task_id = assignment.get("task_id", "")
                 if task_id:
                     review_tasks[task_id] = assignment.get("github_issue_number", 0)
+                    review_task_agents[task_id] = agent_id
 
         for task_id, issue_number in review_tasks.items():
             reports = self.state.read_reports(task_id)
@@ -350,6 +371,22 @@ class Orchestrator:
                     self.github.update_labels(
                         issue_number, add=["consensus:pass"], remove=["status:review-needed"]
                     )
+                    # Advance to release stage
+                    release_agent = self._get_primary_agent("release") or self._get_secondary_agent("release")
+                    if release_agent:
+                        consensus_agent = review_task_agents.get(task_id)
+                        self.state.write_assignment(release_agent, {
+                            "agent_id": release_agent,
+                            "task_id": task_id,
+                            "stage": "release",
+                            "github_issue_number": issue_number,
+                            "assigned_at": datetime.now(timezone.utc).isoformat(),
+                            "timeout_minutes": self.config["orchestrator"]["assignment_timeout_minutes"],
+                            "context": {
+                                "consensus": result.to_dict(),
+                            },
+                        })
+                        logger.info("Advanced %s: consensus -> release (agent: %s)", task_id, release_agent)
                 elif result.action == "escalate":
                     self.github.update_labels(
                         issue_number, add=["escalation:human"], remove=["status:review-needed"]
@@ -383,6 +420,11 @@ class Orchestrator:
                     self.github.update_labels(
                         issue_number, add=["consensus:fail"], remove=["status:review-needed"]
                     )
+
+                # Clear consensus assignment to prevent re-processing on next poll
+                consensus_agent = review_task_agents.get(task_id)
+                if consensus_agent:
+                    self.state.clear_assignment(consensus_agent)
 
                 triggered += 1
 

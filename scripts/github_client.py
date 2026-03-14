@@ -140,10 +140,16 @@ class GitHubClient:
                 "--add-label", ",".join(add),
             ])
         if remove:
-            self._run_gh([
-                "issue", "edit", str(issue_number),
-                "--remove-label", ",".join(remove),
-            ])
+            try:
+                self._run_gh([
+                    "issue", "edit", str(issue_number),
+                    "--remove-label", ",".join(remove),
+                ])
+            except GitHubClientError as e:
+                if "not found" in str(e):
+                    logger.debug("Label(s) not found on issue #%s, skipping remove: %s", issue_number, remove)
+                else:
+                    raise
 
     def close_issue(self, issue_number: int, comment: str | None = None) -> None:
         """Close an issue with an optional closing comment."""

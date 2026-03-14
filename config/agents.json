@@ -6,7 +6,7 @@
       "display_name": "Claude Code",
       "base_weight": 0.40,
       "reliability": 1.0,
-      "primary_stages": ["kickoff", "requirements", "planning", "review", "release"],
+      "primary_stages": ["kickoff", "requirements", "planning", "review", "release", "final-report"],
       "secondary_stages": ["consensus"],
       "can_modify": ["docs/specs/", "docs/plans/", "docs/release-notes/", ".orchestra/tasks/", "CHANGELOG.md"],
       "cannot_modify": ["src/", "tests/"],
