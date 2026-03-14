@@ -105,7 +105,7 @@ class GitHubClient:
                 title=issue["title"],
                 body=issue.get("body", ""),
                 state=issue["state"],
-                labels=[l["name"] for l in issue.get("labels", [])],
+                labels=[lbl["name"] for lbl in issue.get("labels", [])],
             )
             for issue in raw_issues
         ]
@@ -123,7 +123,7 @@ class GitHubClient:
             title=data["title"],
             body=data.get("body", ""),
             state=data["state"],
-            labels=[l["name"] for l in data.get("labels", [])],
+            labels=[lbl["name"] for lbl in data.get("labels", [])],
             comments=data.get("comments", []),
         )
 

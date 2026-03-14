@@ -5,8 +5,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from scripts.state_manager import StateManager
+import pytest
 
+from scripts.state_manager import StateManager
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -179,3 +180,136 @@ def test_get_stale_assignments(tmp_path: Path) -> None:
 
     assert "stale-agent" in stale_agent_ids, "60-min-old assignment must be detected as stale"
     assert "fresh-agent" not in stale_agent_ids, "5-min-old assignment must not be stale"
+
+
+def test_write_read_assignment_round_trip(tmp_path: Path) -> None:
+    """write_assignment + read_assignment must preserve all fields exactly."""
+    mgr = make_manager(tmp_path)
+    mgr.ensure_directories()
+
+    payload = {
+        "agent_id": "round-trip-agent",
+        "task_id": "task-999",
+        "stage": "review",
+        "github_issue_number": 77,
+        "assigned_at": iso_now(),
+        "context": {"spec_path": "docs/spec.md", "branch_name": "feat/task-999"},
+    }
+
+    mgr.write_assignment("round-trip-agent", payload)
+    result = mgr.read_assignment("round-trip-agent")
+
+    assert result is not None
+    assert result["task_id"] == "task-999"
+    assert result["stage"] == "review"
+    assert result["github_issue_number"] == 77
+    assert result["context"]["branch_name"] == "feat/task-999"
+
+
+def test_get_stale_assignments_with_timezone_naive_string(tmp_path: Path) -> None:
+    """get_stale_assignments must handle ISO strings that lack timezone info."""
+    mgr = make_manager(tmp_path)
+    mgr.ensure_directories()
+
+    # Naive datetime string (no +00:00 suffix) — 90 minutes in the past
+    naive_old = (datetime.now(timezone.utc) - timedelta(minutes=90)).replace(
+        tzinfo=None
+    ).isoformat()
+
+    mgr.write_assignment(
+        "naive-stale-agent",
+        {"task_id": "task-tz-naive", "assigned_at": naive_old},
+    )
+
+    # The implementation uses fromisoformat; a naive datetime compared to aware
+    # datetime raises TypeError — code must handle or the test documents the behaviour.
+    try:
+        stale = mgr.get_stale_assignments(timeout_minutes=30)
+        # If it handled gracefully, the stale agent should ideally be detected
+        # OR silently skipped — either is acceptable; we just must not crash.
+        assert isinstance(stale, list)
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(
+            f"get_stale_assignments raised an unexpected exception: {exc}"
+        )
+
+
+def test_get_stale_assignments_with_timezone_aware_z_suffix(tmp_path: Path) -> None:
+    """get_stale_assignments must handle ISO 8601 strings ending with 'Z'."""
+    mgr = make_manager(tmp_path)
+    mgr.ensure_directories()
+
+    # 'Z' suffix is valid ISO 8601 but fromisoformat only supports it in Python 3.11+
+    stale_time = datetime.now(timezone.utc) - timedelta(minutes=60)
+    # Produce e.g. "2026-03-14T10:00:00Z"
+    z_string = stale_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    mgr.write_assignment(
+        "z-suffix-agent",
+        {"task_id": "task-z-suffix", "assigned_at": z_string},
+    )
+
+    try:
+        stale = mgr.get_stale_assignments(timeout_minutes=30)
+        # Must not raise; stale list is valid (agent may or may not appear depending
+        # on Python version's fromisoformat support for 'Z')
+        assert isinstance(stale, list)
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(
+            f"get_stale_assignments raised unexpected exception for Z-suffix: {exc}"
+        )
+
+
+def test_atomic_write_no_temp_file_left_behind(tmp_path: Path) -> None:
+    """_atomic_write must not leave .tmp files in the target directory."""
+    mgr = make_manager(tmp_path)
+    mgr.ensure_directories()
+
+    target_dir = mgr.base_dir / "state" / "assigned"
+    target_path = target_dir / "atomic-agent.json"
+
+    mgr._atomic_write(target_path, {"task_id": "task-atomic", "value": 123})
+
+    # Final file must exist with correct content
+    assert target_path.exists()
+
+    # No .tmp files may remain
+    tmp_files = list(target_dir.glob("*.tmp"))
+    assert tmp_files == [], f"Leftover .tmp files found: {tmp_files}"
+
+
+def test_atomic_write_produces_valid_json(tmp_path: Path) -> None:
+    """_atomic_write must write valid, parseable JSON content."""
+    import json
+
+    mgr = make_manager(tmp_path)
+    mgr.ensure_directories()
+
+    data = {"key": "value", "number": 42, "nested": {"a": [1, 2, 3]}}
+    path = mgr.base_dir / "state" / "assigned" / "json-check.json"
+    mgr._atomic_write(path, data)
+
+    parsed = json.loads(path.read_text(encoding="utf-8"))
+    assert parsed == data
+
+
+def test_get_stale_assignments_empty_returns_empty_list(tmp_path: Path) -> None:
+    """get_stale_assignments must return [] when no assignments exist at all."""
+    mgr = make_manager(tmp_path)
+    mgr.ensure_directories()
+
+    result = mgr.get_stale_assignments(timeout_minutes=30)
+    assert result == []
+
+
+def test_get_stale_assignments_skips_missing_assigned_at(tmp_path: Path) -> None:
+    """Assignments without assigned_at field must be silently skipped."""
+    mgr = make_manager(tmp_path)
+    mgr.ensure_directories()
+
+    # Assignment with no assigned_at key
+    mgr.write_assignment("no-time-agent", {"task_id": "task-no-time"})
+
+    stale = mgr.get_stale_assignments(timeout_minutes=30)
+    agent_ids = [s.get("agent_id") for s in stale]
+    assert "no-time-agent" not in agent_ids

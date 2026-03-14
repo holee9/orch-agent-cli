@@ -34,13 +34,17 @@ def test_create_issue() -> None:
     client = GitHubClient(REPO)
     url_output = "https://github.com/owner/repo/issues/42\n"
 
-    with patch("subprocess.run", return_value=_make_completed_process(stdout=url_output)) as mock_run:
+    completed = _make_completed_process(stdout=url_output)
+    with patch("subprocess.run", return_value=completed) as mock_run:
         issue_number = client.create_issue(title="My Title", body="My Body")
 
     assert issue_number == 42
     mock_run.assert_called_once()
     cmd_args = mock_run.call_args[0][0]
-    assert cmd_args == ["gh", "issue", "create", "--title", "My Title", "--body", "My Body", "--repo", REPO]
+    assert cmd_args == [
+        "gh", "issue", "create",
+        "--title", "My Title", "--body", "My Body", "--repo", REPO,
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +57,9 @@ def test_create_issue_with_labels() -> None:
     client = GitHubClient(REPO)
     url_output = "https://github.com/owner/repo/issues/7"
 
-    with patch("subprocess.run", return_value=_make_completed_process(stdout=url_output)) as mock_run:
+    with patch(
+        "subprocess.run", return_value=_make_completed_process(stdout=url_output)
+    ) as mock_run:
         issue_number = client.create_issue(title="T", body="B", labels=["bug", "help wanted"])
 
     assert issue_number == 7

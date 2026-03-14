@@ -10,8 +10,28 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NotRequired, TypedDict
 
 logger = logging.getLogger(__name__)
+
+
+class ReportData(TypedDict):
+    """Expected shape for data passed to generate_report_markdown().
+
+    Two accepted forms:
+    - Form A (orchestrator mode): includes 'consensus_results', 'reports', 'completions'
+      as produced by collect_session_data().
+    - Form B (simple mode): includes 'issues' as a flat list of issue dicts.
+    Both forms require 'session_id'.
+    """
+    session_id: str
+    target_repo: NotRequired[str]
+    completed_issues: NotRequired[list[dict]]
+    consensus_results: NotRequired[list[dict]]
+    reports: NotRequired[list[dict]]
+    issues: NotRequired[list[dict]]
+    duration_seconds: NotRequired[float]
+    agent_stats: NotRequired[dict]
 
 
 def collect_session_data(
@@ -68,12 +88,20 @@ def collect_session_data(
     return data
 
 
-def generate_report_markdown(session_data: dict) -> str:
+def generate_report_markdown(session_data: ReportData | dict) -> str:
     """Generate a Korean-language final report in Markdown format.
 
+    Accepts two data shapes (backward compatible):
+    - Form A (orchestrator mode): dict from collect_session_data() containing
+      'consensus_results' (list), 'reports' (dict), and 'completions' (list).
+    - Form B (simple mode): dict with 'session_id' and 'issues' (list of issue dicts).
+
     Args:
-        session_data: Either from collect_session_data() or a simple dict
-                      with 'session_id' and 'issues' keys.
+        session_data: Either a ReportData-shaped dict from collect_session_data(),
+                      or a simple dict with 'session_id' and 'issues' keys.
+
+    Returns:
+        Markdown string for the final report.
     """
     session_id = session_data.get("session_id", "unknown")
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -92,6 +120,10 @@ def generate_report_markdown(session_data: dict) -> str:
         "## 요약",
         "",
     ])
+
+    # --- Form A (orchestrator mode): consensus_results / reports present ---
+    # --- Form B (simple mode):       issues list present ---
+    # Both forms may coexist; sections are rendered when their keys are present.
 
     # If we have consensus results
     consensus_results = session_data.get("consensus_results", [])

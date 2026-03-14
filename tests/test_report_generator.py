@@ -7,7 +7,6 @@ from pathlib import Path
 
 from scripts.report_generator import collect_session_data, generate_report_markdown
 
-
 # ---------------------------------------------------------------------------
 # test_generate_report_with_issues
 # ---------------------------------------------------------------------------

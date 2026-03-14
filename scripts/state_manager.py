@@ -5,11 +5,23 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re as _re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+_SAFE_ID_PATTERN = _re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_\-]{0,63}$')
+
+
+def _validate_id(value: str, field_name: str) -> None:
+    """Validate that an ID is safe to use as a filename component."""
+    if not _SAFE_ID_PATTERN.match(value):
+        raise ValueError(
+            f"Invalid {field_name}: '{value}'. "
+            "Only alphanumeric characters, hyphens, and underscores allowed."
+        )
 
 
 class StateManager:
@@ -37,6 +49,7 @@ class StateManager:
 
     def write_assignment(self, agent_id: str, assignment: dict) -> Path:
         """Write assignment file for an agent. Uses atomic rename for safety."""
+        _validate_id(agent_id, "agent_id")
         path = self.base_dir / "state" / "assigned" / f"{agent_id}.json"
         self._atomic_write(path, assignment)
         logger.info("Wrote assignment for %s: task %s", agent_id, assignment.get("task_id"))
@@ -44,11 +57,13 @@ class StateManager:
 
     def read_assignment(self, agent_id: str) -> dict | None:
         """Read an agent's current assignment. Returns None if no assignment."""
+        _validate_id(agent_id, "agent_id")
         path = self.base_dir / "state" / "assigned" / f"{agent_id}.json"
         return self._read_json(path)
 
     def clear_assignment(self, agent_id: str) -> bool:
         """Remove an agent's assignment file. Returns True if file existed."""
+        _validate_id(agent_id, "agent_id")
         path = self.base_dir / "state" / "assigned" / f"{agent_id}.json"
         if path.exists():
             path.unlink()
@@ -69,8 +84,12 @@ class StateManager:
 
     # --- Completion Signal Operations ---
 
-    def write_completion(self, agent_id: str, task_id: str, artifacts: list[str] | None = None) -> Path:
+    def write_completion(
+        self, agent_id: str, task_id: str, artifacts: list[str] | None = None
+    ) -> Path:
         """Write a completion signal file."""
+        _validate_id(agent_id, "agent_id")
+        _validate_id(task_id, "task_id")
         filename = f"{agent_id}-{task_id}.json"
         path = self.base_dir / "state" / "completed" / filename
         data = {
@@ -96,6 +115,8 @@ class StateManager:
 
     def clear_completion(self, agent_id: str, task_id: str) -> bool:
         """Remove a processed completion signal."""
+        _validate_id(agent_id, "agent_id")
+        _validate_id(task_id, "task_id")
         filename = f"{agent_id}-{task_id}.json"
         path = self.base_dir / "state" / "completed" / filename
         if path.exists():
@@ -107,6 +128,8 @@ class StateManager:
 
     def write_report(self, task_id: str, agent_id: str, report: dict) -> Path:
         """Write an agent's review report."""
+        _validate_id(task_id, "task_id")
+        _validate_id(agent_id, "agent_id")
         path = self.base_dir / "reports" / f"{task_id}.{agent_id}.json"
         self._atomic_write(path, report)
         logger.info("Wrote report: %s.%s", task_id, agent_id)
@@ -114,6 +137,7 @@ class StateManager:
 
     def read_reports(self, task_id: str) -> dict[str, dict]:
         """Read all reports for a task. Returns {agent_id: report_data}."""
+        _validate_id(task_id, "task_id")
         reports_dir = self.base_dir / "reports"
         result = {}
         if reports_dir.exists():
@@ -129,6 +153,7 @@ class StateManager:
 
     def write_consensus(self, task_id: str, result: dict) -> Path:
         """Store consensus result."""
+        _validate_id(task_id, "task_id")
         path = self.base_dir / "consensus" / f"{task_id}.json"
         self._atomic_write(path, result)
         logger.info("Wrote consensus for %s: %s", task_id, result.get("action"))
@@ -136,6 +161,7 @@ class StateManager:
 
     def read_consensus(self, task_id: str) -> dict | None:
         """Read consensus result for a task."""
+        _validate_id(task_id, "task_id")
         path = self.base_dir / "consensus" / f"{task_id}.json"
         return self._read_json(path)
 
@@ -168,7 +194,12 @@ class StateManager:
             if not assigned_at_str:
                 continue
             try:
-                assigned_at = datetime.fromisoformat(assigned_at_str)
+                assigned_at = datetime.fromisoformat(
+                    assigned_at_str.replace("Z", "+00:00")
+                )
+                # Normalize both to UTC-aware for safe comparison
+                if assigned_at.tzinfo is None:
+                    assigned_at = assigned_at.replace(tzinfo=timezone.utc)
                 if (now - assigned_at).total_seconds() > timeout_minutes * 60:
                     stale.append({**assignment, "agent_id": agent_id})
             except (ValueError, TypeError):

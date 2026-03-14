@@ -14,6 +14,19 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+MAX_BRIEF_SIZE = 1_048_576  # 1MB
+
+
+def _is_safe_path(path: Path, base_dir: Path) -> bool:
+    """Verify path is within base_dir and is not a symlink."""
+    try:
+        resolved = path.resolve()
+        base_resolved = base_dir.resolve()
+        return resolved.is_relative_to(base_resolved) and not path.is_symlink()
+    except (OSError, ValueError):
+        return False
+
+
 # Expected BRIEF sections (Korean headers -> English keys)
 SECTION_MAP: dict[str, str] = {
     "프로젝트": "project",
@@ -37,7 +50,12 @@ def scan_inbox(inbox_dir: str | Path) -> list[Path]:
     if not inbox.exists():
         logger.debug("Inbox directory does not exist: %s", inbox)
         return []
-    briefs = sorted(inbox.glob("BRIEF-*.md"))
+    briefs = []
+    for f in sorted(inbox.glob("BRIEF-*.md")):
+        if not _is_safe_path(f, inbox):
+            logger.warning("Skipping unsafe path in inbox: %s", f)
+            continue
+        briefs.append(f)
     if briefs:
         logger.info("Found %d BRIEF file(s) in inbox", len(briefs))
     return briefs
@@ -50,6 +68,10 @@ def parse_brief(path: str | Path) -> dict:
     Returns dict with 'raw_title', 'sections', 'source_path', and 'raw_content'.
     """
     path = Path(path)
+    if path.stat().st_size > MAX_BRIEF_SIZE:
+        raise ValueError(
+            f"BRIEF file too large: {path.stat().st_size} bytes (max {MAX_BRIEF_SIZE})"
+        )
     content = path.read_text(encoding="utf-8")
 
     result: dict = {
@@ -126,7 +148,7 @@ def format_kickoff_issue(brief_data: dict) -> tuple[str, str]:
     lines = [
         "# Kickoff Issue",
         "",
-        f"**Source:** `{brief_data['source_path']}`",
+        f"**Source:** `{Path(brief_data['source_path']).name}`",
         f"**Created:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
         "",
         "---",
@@ -168,6 +190,16 @@ def archive_brief(brief_path: str | Path, archive_dir: str | Path) -> Path:
     """
     brief_path = Path(brief_path)
     archive = Path(archive_dir)
+
+    base_dir = brief_path.parent
+    if not _is_safe_path(brief_path, base_dir):
+        raise ValueError(f"Unsafe brief path: {brief_path}")
+    if brief_path.stat().st_size > MAX_BRIEF_SIZE:
+        raise ValueError(
+            f"BRIEF file too large for archiving: "
+            f"{brief_path.stat().st_size} bytes (max {MAX_BRIEF_SIZE})"
+        )
+
     archive.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")

@@ -10,8 +10,9 @@ Implements the consensus algorithm from the v3 plan:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,8 @@ class AgentVote:
     confidence: float
     base_weight: float
     reliability: float = 1.0
+    veto: bool = False
+    reason: str = field(default="")
 
     @property
     def effective_weight(self) -> float:
@@ -163,29 +166,55 @@ class ConsensusEngine:
     def build_votes_from_reports(
         self,
         reports: dict[str, dict],
-        agents_config: list[dict],
+        agents_config: dict[str, Any] | list[dict],
     ) -> list[AgentVote]:
         """Build AgentVote list from report data and agent configuration.
 
         Args:
-            reports: {agent_id: report_data} from state_manager.read_reports()
-            agents_config: list of agent config dicts from agents.json
+            reports: {agent_id: report_dict} mapping, each report expected to contain
+                     'score', 'vote', 'confidence' keys.
+                     Malformed reports (missing required fields) are skipped
+                     with a warning rather than raising KeyError.
+            agents_config: either {agent_id: config_dict} mapping, or a list of
+                           agent config dicts each containing an 'id' key.
         """
-        agent_lookup = {a["id"]: a for a in agents_config}
+        # Normalise list form to dict for O(1) lookup
+        config_map: dict[str, Any] = (
+            {a["id"]: a for a in agents_config if "id" in a}
+            if isinstance(agents_config, list)
+            else agents_config
+        )
+
         votes = []
         for agent_id, report in reports.items():
-            agent_cfg = agent_lookup.get(agent_id)
-            if not agent_cfg:
-                logger.warning("Unknown agent in report: %s", agent_id)
+            score = report.get("score")
+            vote = report.get("vote")
+            confidence = report.get("confidence")
+
+            # Validate required fields
+            if score is None or not vote or confidence is None:
+                logger.warning(
+                    "Skipping malformed report (missing required fields): %s",
+                    {k: report.get(k) for k in ["agent_id", "score", "vote", "confidence"]},
+                )
                 continue
-            votes.append(AgentVote(
-                agent_id=agent_id,
-                score=report["score"],
-                vote=report["vote"],
-                confidence=report["confidence"],
-                base_weight=agent_cfg["base_weight"],
-                reliability=agent_cfg.get("reliability", 1.0),
-            ))
+
+            if agent_id not in config_map:
+                logger.debug("Skipping report from unknown agent: %s", agent_id)
+                continue
+            agent_cfg = config_map[agent_id]
+            votes.append(
+                AgentVote(
+                    agent_id=agent_id,
+                    score=int(score),
+                    vote=str(vote),
+                    confidence=float(confidence),
+                    base_weight=float(agent_cfg.get("base_weight", 0.33)),
+                    reliability=float(agent_cfg.get("reliability", 1.0)),
+                    veto=bool(report.get("veto", False)),
+                    reason=str(report.get("reason", "")),
+                )
+            )
         return votes
 
     def _build_details(self, votes: list[AgentVote]) -> list[dict]:

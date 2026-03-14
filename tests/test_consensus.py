@@ -239,7 +239,9 @@ def test_build_votes_from_reports_unknown_agent_skipped(engine: ConsensusEngine)
 # ---------------------------------------------------------------------------
 
 
-def test_consensus_result_to_dict(engine: ConsensusEngine, all_ready_votes: list[AgentVote]) -> None:
+def test_consensus_result_to_dict(
+    engine: ConsensusEngine, all_ready_votes: list[AgentVote]
+) -> None:
     result = engine.compute("TASK-009", all_ready_votes)
     d = result.to_dict()
 

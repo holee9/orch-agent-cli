@@ -25,7 +25,9 @@ def load_schema(schema_name: str) -> dict:
     """Load a JSON schema by name from the schemas/ directory."""
     filename = SCHEMA_REGISTRY.get(schema_name)
     if not filename:
-        raise ValueError(f"Unknown schema: {schema_name}. Available: {list(SCHEMA_REGISTRY.keys())}")
+        raise ValueError(
+            f"Unknown schema: {schema_name}. Available: {list(SCHEMA_REGISTRY.keys())}"
+        )
 
     schema_path = SCHEMA_DIR / filename
     if not schema_path.exists():
@@ -51,7 +53,8 @@ def validate_or_raise(data: dict, schema_name: str) -> None:
     errors = validate(data, schema_name)
     if errors:
         raise ValidationError(
-            f"Validation failed for schema '{schema_name}':\n" + "\n".join(f"  - {e}" for e in errors)
+            f"Validation failed for schema '{schema_name}':\n"
+            + "\n".join(f"  - {e}" for e in errors)
         )
 
 

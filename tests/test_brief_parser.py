@@ -270,3 +270,126 @@ def test_archive_brief(sample_brief_file: Path, tmp_archive: Path) -> None:
     assert len(prefix) > 0, "Expected timestamp prefix before original filename"
     # Rough check: prefix contains digits and a hyphen
     assert any(c.isdigit() for c in prefix)
+
+
+# ---------------------------------------------------------------------------
+# Test 9: scan_inbox with empty inbox returns empty list
+# ---------------------------------------------------------------------------
+
+
+def test_scan_inbox_returns_empty_list_when_no_briefs(tmp_path: Path) -> None:
+    """scan_inbox must return [] when inbox exists but has no BRIEF-*.md files."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    # Write non-BRIEF files to confirm they are ignored
+    (inbox / "notes.md").write_text("not a brief", encoding="utf-8")
+    (inbox / "README.txt").write_text("readme", encoding="utf-8")
+
+    result = scan_inbox(inbox)
+
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Test 10: parse_brief handles empty file gracefully
+# ---------------------------------------------------------------------------
+
+
+def test_parse_brief_empty_file(tmp_path: Path) -> None:
+    """parse_brief must return a valid dict with empty fields for an empty file."""
+    empty = tmp_path / "BRIEF-empty.md"
+    empty.write_text("", encoding="utf-8")
+
+    data = parse_brief(empty)
+
+    assert data["raw_title"] == ""
+    assert data["sections"] == {}
+    assert data["raw_content"] == ""
+    assert data["source_path"] == str(empty)
+
+
+# ---------------------------------------------------------------------------
+# Test 11: parse_brief with only title and no sections
+# ---------------------------------------------------------------------------
+
+
+def test_parse_brief_title_only_no_sections(tmp_path: Path) -> None:
+    """parse_brief must handle a file with only a title header and no sections."""
+    content = "# 제목만 있는 BRIEF\n\n본문이 없습니다.\n"
+    brief = tmp_path / "BRIEF-title-only.md"
+    brief.write_text(content, encoding="utf-8")
+
+    data = parse_brief(brief)
+
+    assert data["raw_title"] == "제목만 있는 BRIEF"
+    assert data["sections"] == {}
+
+
+# ---------------------------------------------------------------------------
+# Test 12: parse_brief with missing required sections still parses available ones
+# ---------------------------------------------------------------------------
+
+
+def test_parse_brief_partial_sections(tmp_path: Path) -> None:
+    """parse_brief must parse whichever sections are present even if others are missing."""
+    content = "# 부분 BRIEF\n\n## 목표\n목표입니다.\n\n## 기술스택\nPython\n"
+    brief = tmp_path / "BRIEF-partial.md"
+    brief.write_text(content, encoding="utf-8")
+
+    data = parse_brief(brief)
+
+    sections = data["sections"]
+    assert "objectives" in sections
+    assert "tech_stack" in sections
+    # Sections not present must simply be absent
+    assert "background" not in sections
+    assert "scope" not in sections
+
+
+# ---------------------------------------------------------------------------
+# Test 13: format_kickoff_issue output contains required fields and labels
+# ---------------------------------------------------------------------------
+
+
+def test_format_kickoff_issue_required_fields(sample_brief_file: Path) -> None:
+    """format_kickoff_issue must produce a title starting with [Kickoff] and a structured body."""
+    brief_data = parse_brief(sample_brief_file)
+    title, body = format_kickoff_issue(brief_data)
+
+    # Title must carry the [Kickoff] prefix
+    assert title.startswith("[Kickoff]")
+    # Body must contain mandatory structural markers
+    required_body_markers = [
+        "# Kickoff Issue",
+        "**Source:**",
+        "**Created:**",
+        "Original BRIEF (Raw)",
+        "```markdown",
+    ]
+    for marker in required_body_markers:
+        assert marker in body, f"Expected marker missing from body: {marker!r}"
+
+
+def test_format_kickoff_issue_title_contains_brief_title(sample_brief_file: Path) -> None:
+    """format_kickoff_issue title must include the raw BRIEF title."""
+    brief_data = parse_brief(sample_brief_file)
+    title, _ = format_kickoff_issue(brief_data)
+
+    assert brief_data["raw_title"] in title
+
+
+# ---------------------------------------------------------------------------
+# Test 14: parse_brief rejects files over the 1 MB size limit
+# ---------------------------------------------------------------------------
+
+
+def test_parse_brief_rejects_oversized_file(tmp_path: Path) -> None:
+    """parse_brief must raise ValueError for files exceeding MAX_BRIEF_SIZE (1 MB)."""
+    from scripts.brief_parser import MAX_BRIEF_SIZE
+
+    large_file = tmp_path / "BRIEF-large.md"
+    # Write just over 1 MB of content
+    large_file.write_bytes(b"x" * (MAX_BRIEF_SIZE + 1))
+
+    with pytest.raises(ValueError, match="too large"):
+        parse_brief(large_file)
