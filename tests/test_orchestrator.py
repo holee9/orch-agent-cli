@@ -329,7 +329,8 @@ def test_get_next_stage(tmp_path: Path) -> None:
     assert orc._get_next_stage("review") == "testing"
     assert orc._get_next_stage("testing") == "consensus"
     assert orc._get_next_stage("consensus") == "release"
-    assert orc._get_next_stage("release") == "final-report"
+    assert orc._get_next_stage("release") == "readme-sync"
+    assert orc._get_next_stage("readme-sync") == "final-report"
     # Last stage has no successor
     assert orc._get_next_stage("final-report") is None
     # Unknown stage returns None
