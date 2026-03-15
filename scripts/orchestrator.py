@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -17,7 +18,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
 import yaml
 
@@ -148,6 +149,9 @@ class Orchestrator:
 
         # Deduplication guard: track issue numbers that already have an escalation issue
         self._escalated_issue_numbers: set[int] = set()
+
+        # Idempotency guard: track task_ids that already triggered readme-sync
+        self._readme_sync_keys: set[str] = set()
 
         # Resolve paths — prefix with target_path when set
         _base = Path(target_path) if target_path else Path(".")
@@ -582,6 +586,18 @@ class Orchestrator:
                 self._get_primary_agent(next_stage) or self._get_secondary_agent(next_stage)
             )
             if next_agent:
+                prev_context = assignment.get("context", {})
+                new_context: dict = {
+                    "spec_path": prev_context.get("spec_path", ""),
+                    "plan_path": prev_context.get("plan_path", ""),
+                    "branch_name": f"feat/{task_id}",
+                    "brief_path": prev_context.get("brief_path", ""),
+                    "target_project_path": prev_context.get("target_project_path", ""),
+                }
+                if current_stage == "release" and next_stage == "readme-sync":
+                    issue_number = assignment.get("github_issue_number", 0)
+                    self._trigger_readme_sync(task_id, issue_number, prev_context)
+                    return next_agent
                 self.state.write_assignment(next_agent, {
                     "agent_id": next_agent,
                     "task_id": task_id,
@@ -589,11 +605,7 @@ class Orchestrator:
                     "github_issue_number": assignment.get("github_issue_number", 0),
                     "assigned_at": completion.get("completed_at", ""),
                     "timeout_minutes": self.config["orchestrator"]["assignment_timeout_minutes"],
-                    "context": {
-                        "spec_path": assignment.get("context", {}).get("spec_path", ""),
-                        "plan_path": assignment.get("context", {}).get("plan_path", ""),
-                        "branch_name": f"feat/{task_id}",
-                    },
+                    "context": new_context,
                 })
                 logger.info(
                     "Advanced %s: %s -> %s (agent: %s)",
@@ -606,7 +618,7 @@ class Orchestrator:
         """Get the next stage in the workflow."""
         stages = [
             "kickoff", "requirements", "planning", "implementation",
-            "review", "testing", "consensus", "release", "final-report",
+            "review", "testing", "consensus", "release", "readme-sync", "final-report",
         ]
         try:
             idx = stages.index(current)
@@ -627,6 +639,110 @@ class Orchestrator:
             if stage in agent.get("secondary_stages", []):
                 return agent["id"]
         return None
+
+    # @MX:NOTE: [AUTO] Append-only README sync stage. Idempotent per task_id.
+    # @MX:SPEC: SPEC-P3-005
+    def _trigger_readme_sync(
+        self, task_id: str, issue_number: int, prev_context: dict[str, Any]
+    ) -> None:
+        """Create a readme-sync assignment for the given task (idempotent).
+
+        Args:
+            task_id: The task identifier.
+            issue_number: The GitHub issue number.
+            prev_context: Context dict from the previous (release) stage assignment.
+        """
+        # W2: Bound the idempotency cache to prevent unbounded memory growth
+        if len(self._readme_sync_keys) > 1000:
+            self._readme_sync_keys.clear()
+            logger.info("readme_sync_keys cache cleared (exceeded 1000 entries)")
+
+        if task_id in self._readme_sync_keys:
+            return
+        self._readme_sync_keys.add(task_id)
+
+        target_project_path = prev_context.get("target_project_path", "")
+        if not target_project_path:
+            logger.warning(
+                "readme-sync skipped for %s: target_project_path missing from context",
+                task_id,
+            )
+            try:
+                self.github.add_comment(
+                    issue_number,
+                    f"readme-sync skipped for `{task_id}`: target_project_path not configured.",
+                )
+            except Exception:  # noqa: BLE001
+                pass  # Best effort notification
+            return
+
+        # W1: Validate target_project_path is a real directory before proceeding
+        if not os.path.isdir(target_project_path):
+            logger.warning(
+                "readme-sync skipped for %s: target_project_path %s is not a valid directory",
+                task_id,
+                target_project_path,
+            )
+            return
+
+        brief_path = prev_context.get("brief_path", "")
+        if not brief_path:
+            logger.warning(
+                "readme-sync for %s: brief_path missing from context, using empty string",
+                task_id,
+            )
+
+        agent = self._get_primary_agent("readme-sync")
+        if not agent:
+            logger.warning(
+                "readme-sync skipped for %s: no primary agent configured for readme-sync stage",
+                task_id,
+            )
+            return
+
+        try:
+            # C1: Use shlex.quote() to prevent command injection via path/task_id
+            self.state.write_assignment(agent, {
+                "agent_id": agent,
+                "task_id": task_id,
+                "stage": "readme-sync",
+                "github_issue_number": issue_number,
+                "assigned_at": datetime.now(timezone.utc).isoformat(),
+                "timeout_minutes": self.config["orchestrator"]["assignment_timeout_minutes"],
+                "brief_path": brief_path,
+                "target_project_path": target_project_path,
+                "instructions": (
+                    "Append-only README update. Do NOT rewrite or remove existing content. "
+                    f"Add a Features/Changelog entry for task {task_id}."
+                ),
+                "git_commit_cmd": (
+                    f"git -C {shlex.quote(target_project_path)} commit -m "
+                    f"{shlex.quote(f'docs: readme-sync for {task_id}')}"
+                ),
+            })
+            logger.info(
+                "readme-sync assignment created for %s (agent: %s)", task_id, agent
+            )
+        except (OSError, ValueError, RuntimeError):
+            logger.warning(
+                "Failed to write readme-sync assignment for %s, continuing", task_id,
+                exc_info=True,
+            )
+
+        try:
+            # S3: More informative comment content
+            self.github.add_comment(
+                issue_number,
+                f"readme-sync assignment created for `{task_id}`.\n"
+                f"- Target: `{target_project_path}`\n"
+                f"- Mode: Append-only (existing content preserved)\n"
+                f"- Agent: `{agent}`",
+            )
+        except (OSError, ValueError, RuntimeError):
+            logger.warning(
+                "Failed to post readme-sync comment for %s, continuing", task_id,
+                exc_info=True,
+            )
 
     # --- Phase 4: Quality Gates ---
 
@@ -725,6 +841,10 @@ class Orchestrator:
                             ],
                             "context": {
                                 "consensus": result.to_dict(),
+                                "brief_path": "",
+                                "target_project_path": self.config["orchestrator"].get(
+                                    "target_project_path", ""
+                                ),
                             },
                         })
                         logger.info(

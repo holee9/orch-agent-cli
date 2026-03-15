@@ -6,9 +6,9 @@
       "display_name": "Claude Code",
       "base_weight": 0.40,
       "reliability": 1.0,
-      "primary_stages": ["kickoff", "requirements", "planning", "review", "release", "final-report"],
+      "primary_stages": ["kickoff", "requirements", "planning", "review", "release", "readme-sync", "final-report"],
       "secondary_stages": ["consensus"],
-      "can_modify": ["docs/specs/", "docs/plans/", "docs/release-notes/", ".orchestra/tasks/", "CHANGELOG.md"],
+      "can_modify": ["docs/specs/", "docs/plans/", "docs/release-notes/", ".orchestra/tasks/", "CHANGELOG.md", "README.md"],
       "cannot_modify": ["src/", "tests/"],
       "can_veto": false,
       "sandbox_mode": null
