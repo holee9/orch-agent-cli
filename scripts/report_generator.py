@@ -340,7 +340,7 @@ class ReportGenerator:
         # 2. Agent Contributions
         lines += ["## 2. Agent Contributions", ""]
         if agents:
-            lines += ["| Agent ID | Role | Primary Stages |", "| -------- | ---- | -------------- |"]
+            lines += ["| Agent ID | Role | Primary Stages |", "| -------- | ---- | -------------- |"]  # noqa: E501
             for agent in agents:
                 agent_id = agent.get("id", "unknown")
                 role = agent.get("role", "—")
@@ -405,7 +405,7 @@ class ReportGenerator:
         if not can_proceed:
             if final_decision == "escalate":
                 recommendations.append(
-                    "Human review is required — consensus could not be reached after maximum re-reviews."
+                    "Human review is required — consensus could not be reached after maximum re-reviews."  # noqa: E501
                 )
             else:
                 recommendations.append(

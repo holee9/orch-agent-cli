@@ -17,6 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypedDict
 
 import yaml
 
@@ -28,9 +29,33 @@ from scripts.github_client import GitHubClient
 from scripts.reliability_tracker import ReliabilityTracker  # noqa: F401
 from scripts.report_generator import generate_report_markdown
 from scripts.state_manager import StateManager
-from scripts.validate_schema import validate
+from scripts.validate_schema import validate, validate_or_raise
 
 logger = logging.getLogger(__name__)
+
+
+# @MX:ANCHOR: [AUTO] Type contract for agent configuration dicts loaded from agents.json
+# @MX:REASON: [AUTO] Enforces cli_command field name; prevents silent key mismatches
+#             caught only at runtime
+class AgentConfig(TypedDict):
+    """Type contract for agent configuration loaded from agents.json.
+
+    All fields are required — enforced at load time by JSON Schema validation.
+    The ``available`` field is added later by check_agent_availability().
+    """
+
+    id: str
+    cli_command: str
+    display_name: str
+    base_weight: float
+    reliability: float
+    primary_stages: list[str]
+    secondary_stages: list[str]
+    can_modify: list[str]
+    cannot_modify: list[str]
+    can_veto: bool
+    sandbox_mode: str | None
+
 
 # ---------------------------------------------------------------------------
 # PID lock file
@@ -134,14 +159,17 @@ class Orchestrator:
         with open(path) as f:
             return yaml.safe_load(f)
 
-    def _load_agents(self) -> list[dict]:
-        """Load agent registry from JSON."""
+    def _load_agents(self) -> list[AgentConfig]:
+        """Load agent registry from JSON and validate each entry against agent schema."""
         path = self._agents_path
         if not path.exists():
             raise FileNotFoundError(f"Agent registry not found: {path}")
         with open(path) as f:
             data = json.load(f)
-        return data["agents"]
+        agents: list[AgentConfig] = data["agents"]
+        for agent in agents:
+            validate_or_raise(agent, "agent")
+        return agents
 
     # --- CLI availability (D-004) ---
 
@@ -154,6 +182,8 @@ class Orchestrator:
         Returns:
             True if the command exits with code 0, False otherwise.
         """
+        if not cli:
+            return False
         try:
             result = subprocess.run(
                 [cli, "--version"],
@@ -161,10 +191,10 @@ class Orchestrator:
                 timeout=5,
             )
             return result.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
             return False
 
-    def check_agent_availability(self, agents: list[dict]) -> list[dict]:
+    def check_agent_availability(self, agents: list[AgentConfig]) -> list[dict]:
         """Check CLI availability for each agent and return updated agent list.
 
         Each returned dict is a shallow copy of the original with an added
@@ -173,18 +203,19 @@ class Orchestrator:
 
         Args:
             agents: List of agent config dicts, each containing at least
-                    ``id`` and ``cli`` fields.
+                    ``id`` and ``cli_command`` fields.
 
         Returns:
             New list of agent dicts with ``available: bool`` added.
         """
-        def _check_one(agent: dict) -> dict:
-            available = self._check_cli_available(agent.get("cli", ""))
+        def _check_one(agent: AgentConfig) -> dict:
+            cli = agent.get("cli_command", "")
+            available = self._check_cli_available(cli)
             if not available:
                 logger.warning(
                     "Agent '%s' CLI '%s' is unavailable",
                     agent.get("id", ""),
-                    agent.get("cli", ""),
+                    cli,
                 )
             return {**agent, "available": available}
 
@@ -248,6 +279,7 @@ class Orchestrator:
         """Execute one complete polling cycle. Returns a summary dict."""
         self._reload_agents_config()
         summary = {
+            "webhook_events_processed": 0,
             "briefs_processed": 0,
             "issues_synced": 0,
             "completions_processed": 0,
@@ -255,6 +287,7 @@ class Orchestrator:
             "stale_released": 0,
         }
 
+        summary["webhook_events_processed"] = self.process_webhook_events()
         summary["briefs_processed"] = self.process_inbox()
         summary["issues_synced"] = self.sync_github_issues()
         summary["completions_processed"] = self.process_completions()
@@ -270,6 +303,122 @@ class Orchestrator:
 
         logger.debug("Poll cycle summary: %s", summary)
         return summary
+
+    # --- Phase 0: Webhook Event Processing ---
+
+    # @MX:NOTE: [AUTO] Shared task ID format constant — used by process_webhook_events,
+    #           _has_active_task, and _create_kickoff_assignment to ensure consistent
+    #           zero-padded 3-digit task identifiers (e.g., TASK-042).
+    _TASK_ID_FMT = "TASK-{:03d}"
+
+    def process_webhook_events(self) -> int:
+        """Consume pending webhook event files and create kickoff assignments.
+
+        Reads ``*.json`` files from the webhook_events cache directory, creates a
+        kickoff assignment for each ``issues`` / ``opened`` event that does not
+        already have an active task, archives processed files to
+        ``webhook_events/processed/``, and moves unparseable files to
+        ``webhook_events/dead-letter/`` to prevent infinite reprocessing.
+
+        Returns:
+            int: Count of new kickoff assignments created. Duplicate events
+                 (already assigned or completed) and non-'issues/opened' events
+                 are not counted. Malformed JSON files are moved to dead-letter
+                 without incrementing the count.
+        """
+        events_dir = self.state.base_dir / "cache" / "webhook_events"
+        processed_dir = events_dir / "processed"
+        dead_letter_dir = events_dir / "dead-letter"
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        dead_letter_dir.mkdir(parents=True, exist_ok=True)
+
+        count = 0
+        try:
+            event_files = sorted(events_dir.glob("*.json"))
+        except PermissionError:
+            logger.error("Permission denied reading webhook_events dir: %s", events_dir)
+            return count
+
+        for event_file in event_files:
+            # --- Parse phase: bad JSON → dead-letter, do not attempt rename ---
+            try:
+                record = json.loads(event_file.read_text())
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("Moving malformed event file to dead-letter %s: %s", event_file, exc)
+                try:
+                    event_file.rename(dead_letter_dir / event_file.name)
+                except FileExistsError:
+                    logger.warning(
+                        "Dead-letter already contains %s; skipping move", event_file.name
+                    )
+                except PermissionError:
+                    logger.error("Permission denied moving to dead-letter: %s", event_file)
+                except OSError:
+                    logger.exception("Failed to move malformed file to dead-letter: %s", event_file)
+                continue
+
+            # --- Business logic + archive phase ---
+            try:
+                if (
+                    record.get("event_type") == "issues"
+                    and record.get("payload", {}).get("action") == "opened"
+                ):
+                    issue_number = record.get("payload", {}).get("issue", {}).get("number")
+                    if (
+                        not isinstance(issue_number, int)
+                        or isinstance(issue_number, bool)
+                        or issue_number <= 0
+                    ):
+                        logger.warning(
+                            "Skipping event with invalid issue number (%r): %s",
+                            issue_number,
+                            event_file,
+                        )
+                    elif not self._has_active_task(issue_number):
+                        self._create_kickoff_assignment(issue_number)
+                        count += 1
+                    else:
+                        logger.info("Skipping duplicate task for Issue #%d", issue_number)
+                # Archive regardless of event type — TOCTOU: file may vanish between
+                # read and rename if another process races; treat as non-fatal.
+                event_file.rename(processed_dir / event_file.name)
+            except FileNotFoundError:
+                logger.warning(
+                    "Event file vanished before archival (race condition): %s", event_file
+                )
+            except FileExistsError:
+                logger.warning(
+                    "Processed dir already contains %s; skipping archive", event_file.name
+                )
+            except PermissionError:
+                logger.error("Permission denied archiving webhook event: %s", event_file)
+            except OSError:
+                logger.exception("Failed to archive webhook event %s", event_file)
+        return count
+
+    def _has_active_task(self, issue_number: int) -> bool:
+        """Return True if issue_number already has an active or completed task.
+
+        Checks both the current assignment file for the primary kickoff agent and
+        the completed state directory to avoid duplicate assignments.
+
+        Note: Only checks the kickoff stage assignment. If the kickoff agent has
+        already handed off the task to a later stage, the completed/ directory
+        check covers that case. Mid-pipeline in-progress tasks for non-kickoff
+        stages are not checked here.
+        """
+        task_id = self._TASK_ID_FMT.format(issue_number)
+        kickoff_agent = self._get_primary_agent("kickoff")
+        if kickoff_agent:
+            assignment = self.state.read_assignment(kickoff_agent)
+            if assignment and assignment.get("task_id") == task_id:
+                return True
+
+        completed_path = self.state.base_dir / "state" / "completed" / f"{task_id}.json"
+        if completed_path.exists():
+            return True
+
+        return False
 
     # --- Phase 1: Inbox Processing ---
 
@@ -292,7 +441,7 @@ class Orchestrator:
             logger.warning("No primary agent found for kickoff stage")
             return
 
-        task_id = f"TASK-{issue_number:03d}"
+        task_id = self._TASK_ID_FMT.format(issue_number)
         assignment = {
             "agent_id": kickoff_agent,
             "task_id": task_id,
@@ -745,13 +894,41 @@ def main() -> None:
     """CLI entry point for the orchestrator."""
     config_path = sys.argv[1] if len(sys.argv) > 1 else "config/config.yaml"
 
+    # Load logging config from config.yaml (falls back to defaults if missing)
+    log_level = logging.INFO
+    log_fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    log_datefmt = "%Y-%m-%dT%H:%M:%SZ"
+    log_file: str | None = None
+    try:
+        with open(config_path) as _f:
+            _cfg = yaml.safe_load(_f) or {}
+        _lcfg = _cfg.get("logging", {})
+        log_level = getattr(logging, str(_lcfg.get("level", "INFO")).upper(), logging.INFO)
+        log_fmt = _lcfg.get("format", log_fmt)
+        log_file = _lcfg.get("file")
+    except (OSError, yaml.YAMLError):
+        pass  # Use defaults; orchestrator will log the error after startup
+
     # Setup logging with UTC timestamps (AC-006)
     logging.Formatter.converter = time.gmtime
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%SZ",
-    )
+    formatter = logging.Formatter(fmt=log_fmt, datefmt=log_datefmt)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+
+    # Always log to stdout
+    _stream_handler = logging.StreamHandler(sys.stdout)
+    _stream_handler.setFormatter(formatter)
+    root_logger.addHandler(_stream_handler)
+
+    # Optionally log to file when configured
+    if log_file:
+        _log_path = Path(log_file)
+        _log_path.parent.mkdir(parents=True, exist_ok=True)
+        _file_handler = logging.FileHandler(_log_path, encoding="utf-8")
+        _file_handler.setFormatter(formatter)
+        root_logger.addHandler(_file_handler)
+        logger.info("File logging enabled: %s", _log_path.resolve())
 
     try:
         orchestrator = Orchestrator(config_path)

@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "id",
+    "cli_command",
+    "display_name",
+    "base_weight",
+    "reliability",
+    "primary_stages",
+    "secondary_stages",
+    "can_modify",
+    "cannot_modify",
+    "can_veto",
+    "sandbox_mode"
+  ],
+  "properties": {
+    "id": {"type": "string"},
+    "cli_command": {"type": "string"},
+    "display_name": {"type": "string"},
+    "base_weight": {"type": "number"},
+    "reliability": {"type": "number"},
+    "primary_stages": {"type": "array", "items": {"type": "string"}},
+    "secondary_stages": {"type": "array", "items": {"type": "string"}},
+    "can_modify": {"type": "array", "items": {"type": "string"}},
+    "cannot_modify": {"type": "array", "items": {"type": "string"}},
+    "can_veto": {"type": "boolean"},
+    "sandbox_mode": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}

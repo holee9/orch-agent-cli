@@ -122,6 +122,11 @@ def _make_orchestrator(tmp_path: Path) -> Orchestrator:
             "_load_agents",
             return_value=MINIMAL_AGENTS["agents"],
         ),
+        patch.object(
+            Orchestrator,
+            "check_agent_availability",
+            side_effect=lambda agents: [{**a, "available": True} for a in agents],
+        ),
     ):
         mock_gh_cls.return_value = MagicMock()
         mock_sm_cls.return_value = MagicMock()
@@ -156,6 +161,7 @@ def test_poll_cycle_returns_summary(tmp_path: Path) -> None:
     orc = _make_orchestrator(tmp_path)
 
     # Stub all sub-methods so the cycle completes without side effects
+    orc.process_webhook_events = MagicMock(return_value=0)
     orc.process_inbox = MagicMock(return_value=0)
     orc.sync_github_issues = MagicMock(return_value=0)
     orc.process_completions = MagicMock(return_value=0)
@@ -167,6 +173,7 @@ def test_poll_cycle_returns_summary(tmp_path: Path) -> None:
     summary = orc.poll_cycle()
 
     expected_keys = {
+        "webhook_events_processed",
         "briefs_processed",
         "issues_synced",
         "completions_processed",

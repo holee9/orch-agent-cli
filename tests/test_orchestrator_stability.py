@@ -114,6 +114,11 @@ def _make_orchestrator(tmp_path: Path) -> Orchestrator:
         patch("scripts.orchestrator.GitHubClient") as mock_gh_cls,
         patch("scripts.orchestrator.StateManager") as mock_sm_cls,
         patch("scripts.orchestrator.ConsensusEngine"),
+        patch.object(
+            Orchestrator,
+            "check_agent_availability",
+            side_effect=lambda agents: [{**a, "available": True} for a in agents],
+        ),
     ):
         mock_gh_cls.return_value = MagicMock()
         mock_sm_cls.return_value = MagicMock()

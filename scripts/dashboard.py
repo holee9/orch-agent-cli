@@ -249,7 +249,7 @@ class Dashboard:
             refresh_seconds: How often to refresh the dashboard (default: 30).
         """
         try:
-            with Live(self.render(), console=self.console, screen=True, refresh_per_second=1) as live:
+            with Live(self.render(), console=self.console, screen=True, refresh_per_second=1) as live:  # noqa: E501
                 while True:
                     time.sleep(refresh_seconds)
                     live.update(self.render())

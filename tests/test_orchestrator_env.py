@@ -55,7 +55,6 @@ MINIMAL_AGENTS = {
     "agents": [
         {
             "id": "claude",
-            "cli": "claude",
             "cli_command": "claude --dangerously-skip-permissions",
             "display_name": "Claude Code",
             "base_weight": 0.40,
@@ -69,7 +68,6 @@ MINIMAL_AGENTS = {
         },
         {
             "id": "codex",
-            "cli": "codex",
             "cli_command": "codex",
             "display_name": "Codex CLI",
             "base_weight": 0.35,
@@ -111,6 +109,11 @@ def _make_orchestrator(tmp_path: Path) -> Orchestrator:
             Orchestrator,
             "_load_agents",
             return_value=MINIMAL_AGENTS["agents"],
+        ),
+        patch.object(
+            Orchestrator,
+            "check_agent_availability",
+            side_effect=lambda agents: [{**a, "available": True} for a in agents],
         ),
     ):
         mock_gh_cls.return_value = MagicMock()
@@ -186,8 +189,8 @@ def test_check_agent_availability_marks_available_agents(tmp_path: Path) -> None
     orc = _make_orchestrator(tmp_path)
 
     agents = [
-        {"id": "claude", "cli": "claude"},
-        {"id": "codex", "cli": "codex"},
+        {"id": "claude", "cli_command": "claude"},
+        {"id": "codex", "cli_command": "codex"},
     ]
 
     def fake_check(cli: str) -> bool:
@@ -204,7 +207,7 @@ def test_check_agent_availability_does_not_mutate_original(tmp_path: Path) -> No
     """check_agent_availability does not mutate the original agents list dicts."""
     orc = _make_orchestrator(tmp_path)
 
-    original = {"id": "claude", "cli": "claude"}
+    original = {"id": "claude", "cli_command": "claude"}
     agents = [original]
 
     with patch.object(orc, "_check_cli_available", return_value=True):
@@ -224,7 +227,7 @@ def test_check_agent_availability_preserves_existing_fields(tmp_path: Path) -> N
     agents = [
         {
             "id": "claude",
-            "cli": "claude",
+            "cli_command": "claude",
             "display_name": "Claude Code",
             "base_weight": 0.40,
         }
@@ -234,7 +237,7 @@ def test_check_agent_availability_preserves_existing_fields(tmp_path: Path) -> N
         result = orc.check_agent_availability(agents)
 
     assert result[0]["id"] == "claude"
-    assert result[0]["cli"] == "claude"
+    assert result[0]["cli_command"] == "claude"
     assert result[0]["display_name"] == "Claude Code"
     assert result[0]["base_weight"] == 0.40
     assert result[0]["available"] is True

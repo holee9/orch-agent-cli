@@ -83,8 +83,8 @@ class _BoundHTTPServer(HTTPServer):
     def __init__(
         self,
         server_address: tuple[str, int],
-        RequestHandlerClass: type,
-        webhook_server: "WebhookServer",
+        RequestHandlerClass: type,  # noqa: N803
+        webhook_server: WebhookServer,
     ) -> None:
         super().__init__(server_address, RequestHandlerClass)
         self.webhook_server = webhook_server

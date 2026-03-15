@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from jsonschema import Draft7Validator, ValidationError
 
@@ -18,6 +19,7 @@ SCHEMA_REGISTRY: dict[str, str] = {
     "release_readiness": "release_readiness.schema.json",
     "assignment": "assignment.schema.json",
     "consensus": "consensus.schema.json",
+    "agent": "agent.schema.json",
 }
 
 
@@ -37,7 +39,7 @@ def load_schema(schema_name: str) -> dict:
         return json.load(f)
 
 
-def validate(data: dict, schema_name: str) -> list[str]:
+def validate(data: Any, schema_name: str) -> list[str]:
     """Validate data against a named schema.
 
     Returns a list of validation error messages. Empty list means valid.
@@ -48,7 +50,7 @@ def validate(data: dict, schema_name: str) -> list[str]:
     return [_format_error(e) for e in errors]
 
 
-def validate_or_raise(data: dict, schema_name: str) -> None:
+def validate_or_raise(data: Any, schema_name: str) -> None:
     """Validate data against a named schema. Raises ValidationError if invalid."""
     errors = validate(data, schema_name)
     if errors:

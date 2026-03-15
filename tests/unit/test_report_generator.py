@@ -10,7 +10,6 @@ import pytest
 
 from scripts.report_generator import ReportGenerator
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -21,7 +20,7 @@ def minimal_config(tmp_path: Path) -> Path:
     config = tmp_path / "config.yaml"
     config.write_text(
         "orchestrator:\n"
-        f"  orchestra_dir: .orchestra\n"
+        "  orchestra_dir: .orchestra\n"
         "consensus:\n"
         "  threshold: 0.9\n"
         "  score_ready_min: 90\n"
@@ -39,7 +38,7 @@ def minimal_agents(tmp_path: Path) -> Path:
     agents_file.write_text(
         json.dumps({
             "agents": [
-                {"id": "agent-claude", "role": "architect", "primary_stages": ["review", "release"]},
+                {"id": "agent-claude", "role": "architect", "primary_stages": ["review", "release"]},  # noqa: E501
                 {"id": "agent-codex", "role": "implementer", "primary_stages": ["implementation"]},
             ]
         }),

@@ -89,6 +89,11 @@ def _make_orchestrator(tmp_path: Path) -> Orchestrator:
         patch("scripts.orchestrator.GitHubClient"),
         patch("scripts.orchestrator.StateManager"),
         patch("scripts.orchestrator.ConsensusEngine"),
+        patch.object(
+            Orchestrator,
+            "check_agent_availability",
+            side_effect=lambda agents: [{**a, "available": True} for a in agents],
+        ),
     ):
         orch = Orchestrator(config_path=config_path, agents_path=agents_path)
     return orch

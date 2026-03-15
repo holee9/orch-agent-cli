@@ -30,7 +30,7 @@ VALID_REPORT: dict = {
     "timestamp": "2026-03-14T12:00:00Z",
     "consensus_result": {"status": "approved", "score": 0.85},
     "agent_votes": [
-        {"agent_id": "claude", "vote": "approve", "weight": 3, "rationale": "Code quality is high."},
+        {"agent_id": "claude", "vote": "approve", "weight": 3, "rationale": "Code quality is high."},  # noqa: E501
         {"agent_id": "codex", "vote": "approve", "weight": 2, "rationale": "Tests pass."},
     ],
     "overall_score": 0.85,

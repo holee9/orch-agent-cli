@@ -147,7 +147,7 @@ class GitHubClient:
                 ])
             except GitHubClientError as e:
                 if "not found" in str(e):
-                    logger.debug("Label(s) not found on issue #%s, skipping remove: %s", issue_number, remove)
+                    logger.debug("Label(s) not found on issue #%s, skipping remove: %s", issue_number, remove)  # noqa: E501
                 else:
                     raise
 

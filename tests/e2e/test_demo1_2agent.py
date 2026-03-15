@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock, patch
 
-import pytest
 import yaml
 
 from scripts.brief_parser import scan_inbox
@@ -67,6 +66,10 @@ DEMO1_AGENTS = {
             "reliability": 1.0,
             "primary_stages": ["kickoff", "requirements", "planning", "review", "release"],
             "secondary_stages": ["implementation"],
+            "can_modify": ["docs/"],
+            "cannot_modify": ["src/"],
+            "can_veto": False,
+            "sandbox_mode": None,
         },
         {
             "id": "codex",
@@ -76,6 +79,10 @@ DEMO1_AGENTS = {
             "reliability": 1.0,
             "primary_stages": ["implementation", "testing"],
             "secondary_stages": ["review"],
+            "can_modify": ["src/", "tests/"],
+            "cannot_modify": ["docs/"],
+            "can_veto": False,
+            "sandbox_mode": None,
         },
     ]
 }
@@ -114,7 +121,14 @@ def _make_orchestrator(tmp_path: Path) -> Orchestrator:
     config_file = _write_config(tmp_path, inbox, archive, orchestra)
     agents_file = _write_agents(tmp_path)
 
-    with patch("scripts.orchestrator.GitHubClient") as mock_gh_cls:
+    with (
+        patch("scripts.orchestrator.GitHubClient") as mock_gh_cls,
+        patch.object(
+            Orchestrator,
+            "check_agent_availability",
+            side_effect=lambda agents: [{**a, "available": True} for a in agents],
+        ),
+    ):
         mock_gh = MagicMock()
         mock_gh_cls.return_value = mock_gh
         orch = Orchestrator(config_path=config_file, agents_path=agents_file)
@@ -171,11 +185,19 @@ def test_brief_detected_and_processed_creates_issue(tmp_path: Path) -> None:
 
 def test_consensus_weighted_approve() -> None:
     """Claude(0.60) + Codex(0.40) both vote ready → approved, ratio >= threshold."""
-    engine = ConsensusEngine(threshold=0.5, score_ready_min=90, dispersion_alert_threshold=20, max_rereviews=2)
+    engine = ConsensusEngine(
+        threshold=0.5, score_ready_min=90, dispersion_alert_threshold=20, max_rereviews=2
+    )
 
     votes = [
-        AgentVote(agent_id="claude", score=95, vote="ready", confidence=1.0, base_weight=0.60, reliability=1.0),
-        AgentVote(agent_id="codex",  score=92, vote="ready", confidence=1.0, base_weight=0.40, reliability=1.0),
+        AgentVote(
+            agent_id="claude", score=95, vote="ready",
+            confidence=1.0, base_weight=0.60, reliability=1.0,
+        ),
+        AgentVote(
+            agent_id="codex", score=92, vote="ready",
+            confidence=1.0, base_weight=0.40, reliability=1.0,
+        ),
     ]
 
     result = engine.compute("task-001", votes, re_review_count=0)
@@ -192,11 +214,19 @@ def test_consensus_weighted_approve() -> None:
 
 def test_consensus_weighted_reject() -> None:
     """Claude(0.60) votes not_ready, Codex(0.40) votes ready → rejected by weight majority."""
-    engine = ConsensusEngine(threshold=0.5, score_ready_min=90, dispersion_alert_threshold=20, max_rereviews=2)
+    engine = ConsensusEngine(
+        threshold=0.5, score_ready_min=90, dispersion_alert_threshold=20, max_rereviews=2
+    )
 
     votes = [
-        AgentVote(agent_id="claude", score=60, vote="not_ready", confidence=1.0, base_weight=0.60, reliability=1.0),
-        AgentVote(agent_id="codex",  score=92, vote="ready",     confidence=1.0, base_weight=0.40, reliability=1.0),
+        AgentVote(
+            agent_id="claude", score=60, vote="not_ready",
+            confidence=1.0, base_weight=0.60, reliability=1.0,
+        ),
+        AgentVote(
+            agent_id="codex", score=92, vote="ready",
+            confidence=1.0, base_weight=0.40, reliability=1.0,
+        ),
     ]
 
     result = engine.compute("task-002", votes, re_review_count=0)
@@ -213,12 +243,20 @@ def test_consensus_weighted_reject() -> None:
 
 def test_consensus_veto_overrides() -> None:
     """A single veto vote must result in rejection regardless of other votes."""
-    engine = ConsensusEngine(threshold=0.5, score_ready_min=90, dispersion_alert_threshold=20, max_rereviews=2)
+    engine = ConsensusEngine(
+        threshold=0.5, score_ready_min=90, dispersion_alert_threshold=20, max_rereviews=2
+    )
 
     # Claude votes ready, Codex vetoes — veto must win
     votes = [
-        AgentVote(agent_id="claude", score=95, vote="ready", confidence=1.0, base_weight=0.60, reliability=1.0),
-        AgentVote(agent_id="codex",  score=30, vote="veto",  confidence=1.0, base_weight=0.40, reliability=1.0),
+        AgentVote(
+            agent_id="claude", score=95, vote="ready",
+            confidence=1.0, base_weight=0.60, reliability=1.0,
+        ),
+        AgentVote(
+            agent_id="codex", score=30, vote="veto",
+            confidence=1.0, base_weight=0.40, reliability=1.0,
+        ),
     ]
 
     result = engine.compute("task-003", votes, re_review_count=0)
@@ -229,11 +267,19 @@ def test_consensus_veto_overrides() -> None:
 
 def test_consensus_veto_by_claude_overrides() -> None:
     """Claude veto must also result in rejection even if Codex votes ready."""
-    engine = ConsensusEngine(threshold=0.5, score_ready_min=90, dispersion_alert_threshold=20, max_rereviews=2)
+    engine = ConsensusEngine(
+        threshold=0.5, score_ready_min=90, dispersion_alert_threshold=20, max_rereviews=2
+    )
 
     votes = [
-        AgentVote(agent_id="claude", score=20, vote="veto",  confidence=1.0, base_weight=0.60, reliability=1.0),
-        AgentVote(agent_id="codex",  score=95, vote="ready", confidence=1.0, base_weight=0.40, reliability=1.0),
+        AgentVote(
+            agent_id="claude", score=20, vote="veto",
+            confidence=1.0, base_weight=0.60, reliability=1.0,
+        ),
+        AgentVote(
+            agent_id="codex", score=95, vote="ready",
+            confidence=1.0, base_weight=0.40, reliability=1.0,
+        ),
     ]
 
     result = engine.compute("task-004", votes, re_review_count=0)

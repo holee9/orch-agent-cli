@@ -7,13 +7,15 @@ from unittest.mock import MagicMock
 import pytest
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=False)
 def mock_cli_subprocess(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Auto-mock scripts.orchestrator.subprocess.run for all tests.
+    """Opt-in fixture: mock scripts.orchestrator.subprocess.run for a single test.
 
-    Prevents _check_cli_available() from spawning real processes during
-    Orchestrator.__init__(). Tests that need to assert on subprocess behaviour
-    can override via their own patch("scripts.orchestrator.subprocess.run").
+    Use this fixture explicitly in tests that need subprocess.run mocked but
+    cannot patch check_agent_availability at the Orchestrator level.
+
+    Most tests should instead patch Orchestrator.check_agent_availability directly
+    inside _make_orchestrator() to avoid masking real logic in _check_cli_available.
 
     Skipped for tests marked with @pytest.mark.real_subprocess.
     """
