@@ -28,6 +28,7 @@ class AgentVote:
     reliability: float = 1.0
     veto: bool = False
     reason: str = field(default="")
+    environment_constrained: bool = False  # True when score reflects env limits, not code quality
 
     @property
     def effective_weight(self) -> float:
@@ -127,10 +128,19 @@ class ConsensusEngine:
         ready_weight = sum(v.effective_weight for v in votes if v.vote == "ready")
         ratio = ready_weight / total_weight if total_weight > 0 else 0.0
 
-        # Step 3: Check score dispersion
-        scores = [v.score for v in votes]
+        # Step 3: Check score dispersion (exclude environment-constrained votes)
+        unconstrained_votes = [v for v in votes if not v.environment_constrained]
+        dispersion_votes = unconstrained_votes if len(unconstrained_votes) >= 2 else votes
+        scores = [v.score for v in dispersion_votes]
         dispersion = max(scores) - min(scores)
         dispersion_warning = dispersion > self.dispersion_alert_threshold
+
+        if any(v.environment_constrained for v in votes):
+            constrained_ids = [v.agent_id for v in votes if v.environment_constrained]
+            logger.info(
+                "Dispersion calc for %s: excluding environment-constrained agents %s",
+                task_id, constrained_ids,
+            )
 
         if dispersion_warning:
             logger.warning(
@@ -213,6 +223,7 @@ class ConsensusEngine:
                     reliability=float(agent_cfg.get("reliability", 1.0)),
                     veto=bool(report.get("veto", False)),
                     reason=str(report.get("reason", "")),
+                    environment_constrained=bool(report.get("environment_constrained", False)),
                 )
             )
         return votes

@@ -49,6 +49,23 @@ if [ -z "${GITHUB_TOKEN:-}" ]; then
   echo "WARNING: GITHUB_TOKEN not set. GitHub API calls will fail." >&2
 fi
 
+# --- Zombie/stale process cleanup ---
+EXISTING_PIDS=$(pgrep -f "python.*scripts.orchestrator" 2>/dev/null || true)
+if [ -n "$EXISTING_PIDS" ]; then
+  echo "[T1] Found existing orchestrator process(es): $EXISTING_PIDS"
+  for pid in $EXISTING_PIDS; do
+    STATE=$(ps -o state= -p "$pid" 2>/dev/null || echo "")
+    if [ -z "$STATE" ] || echo "$STATE" | grep -q "^[TZ]"; then
+      echo "[T1] Killing stopped/zombie process $pid..."
+      kill -9 "$pid" 2>/dev/null || true
+    else
+      echo "ERROR: Orchestrator is already running (PID $pid). Stop it first." >&2
+      exit 1
+    fi
+  done
+  sleep 1
+fi
+
 echo "[T1] Starting orchestrator... (Ctrl+C to stop)"
 echo ""
 
