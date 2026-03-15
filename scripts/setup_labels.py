@@ -53,7 +53,10 @@ LABELS: list[dict[str, str]] = [
     {"name": "consensus:pass", "color": "0E8A16", "description": "Consensus reached - proceed"},
     {"name": "consensus:fail", "color": "B60205", "description": "Consensus failed - rework"},
     {"name": "consensus:veto", "color": "D93F0B", "description": "Vetoed by security review"},
+    {"name": "consensus:escalate", "color": "B60205", "description": "Consensus escalated to human review"},
     {"name": "escalation:human", "color": "B60205", "description": "Requires human intervention"},
+    {"name": "status:human-needed", "color": "E11D48", "description": "Human intervention required"},
+    {"name": "type:escalation", "color": "E11D48", "description": "Escalation issue requiring human decision"},
 ]
 
 

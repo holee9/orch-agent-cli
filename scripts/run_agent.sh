@@ -80,13 +80,24 @@ Your role and instructions are in $ROLE_FILE. Read it and execute the task for s
 
     log "Executing $CLI_CMD for task $TASK_ID..."
 
-    # Run agent non-interactively
-    EXIT_CODE=0
+    # Run agent non-interactively (stdout+stderr both captured to log and terminal)
+    # Temporarily disable errexit/pipefail to capture exit code correctly
+    set +eo pipefail
     case "$AGENT_ID" in
-      claude) claude -p "$PROMPT" 2>>"$LOG_FILE" || EXIT_CODE=$? ;;
-      codex)  codex exec "$PROMPT" 2>>"$LOG_FILE" || EXIT_CODE=$? ;;
-      gemini) gemini -p "$PROMPT" --yolo 2>>"$LOG_FILE" || EXIT_CODE=$? ;;
+      claude)
+        env -u ANTHROPIC_API_KEY claude --dangerously-skip-permissions -p "$PROMPT" 2>&1 | tee -a "$LOG_FILE"
+        EXIT_CODE=${PIPESTATUS[0]}
+        ;;
+      codex)
+        codex exec "$PROMPT" 2>&1 | tee -a "$LOG_FILE"
+        EXIT_CODE=${PIPESTATUS[0]}
+        ;;
+      gemini)
+        gemini -p "$PROMPT" --yolo 2>&1 | tee -a "$LOG_FILE"
+        EXIT_CODE=${PIPESTATUS[0]}
+        ;;
     esac
+    set -eo pipefail
 
     STATUS="success"
     if [ "$EXIT_CODE" -ne 0 ]; then

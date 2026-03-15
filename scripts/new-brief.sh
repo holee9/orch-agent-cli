@@ -127,4 +127,3 @@ say "  파일: $OUTFILE"
 echo
 say "Orchestrator(T1)가 이 파일을 감지하면 자동으로 GitHub Issue를 생성하고"
 say "에이전트 파이프라인이 시작됩니다."
-EOF
