@@ -781,6 +781,123 @@ class Orchestrator:
 
         return triggered
 
+    def _trigger_rework(
+        self,
+        task_id: str,
+        issue_number: int,
+        result: object,
+        last_review_agent: str | None,
+    ) -> None:
+        """Re-assign task to review agent after consensus returns action=rework.
+
+        # @MX:ANCHOR: [AUTO] Central rework gate — called by check_consensus_ready on rework action
+        # @MX:REASON: [AUTO] fan_in >= 3 (check_consensus_ready, tests, future retry logic)
+        #             Ensures one assignment per (task_id, re_review_count) — idempotent guard
+
+        Args:
+            task_id: The task identifier to rework.
+            issue_number: GitHub issue number for the task.
+            result: ConsensusResult with ratio, re_review_count, etc.
+            last_review_agent: The agent_id that last performed review (preferred rework agent).
+        """
+        re_review_count: int = result.re_review_count  # type: ignore[attr-defined]
+        ratio: float = result.ratio  # type: ignore[attr-defined]
+
+        # Idempotency guard: one assignment per (task_id, re_review_count)
+        if not hasattr(self, "_rework_keys"):
+            self._rework_keys: set[str] = set()
+        dedup_key = f"{task_id}/{re_review_count}"
+        if dedup_key in self._rework_keys:
+            logger.info(
+                "Skipping duplicate rework for %s (re_review_count=%d already processed)",
+                task_id, re_review_count,
+            )
+            return
+
+        max_rereviews: int = self.config["consensus"]["max_rereviews"]
+
+        # REQ-004: escalate when re_review_count >= max_rereviews
+        if re_review_count >= max_rereviews:
+            logger.warning(
+                "Max re-reviews reached for %s (%d >= %d), escalating",
+                task_id, re_review_count, max_rereviews,
+            )
+            self._create_escalation_issue(
+                reason=(
+                    f"Consensus rework limit reached after {re_review_count} re-reviews "
+                    f"(ratio={ratio:.2%})"
+                ),
+                context={"agent_id": last_review_agent or "unknown", "task_id": task_id},
+            )
+            return
+
+        # REQ-006: rework agent = last review agent, fallback = highest base_weight review agent
+        rework_agent: str | None = None
+        if last_review_agent:
+            # Check if last_review_agent is available
+            for agent in self.agents:
+                if agent["id"] == last_review_agent and agent.get("available", False):
+                    rework_agent = last_review_agent
+                    break
+
+        if rework_agent is None:
+            # Fallback: highest base_weight agent with review in primary/secondary stages
+            candidates = [
+                a for a in self.agents
+                if a.get("available", False)
+                and "review" in a.get("primary_stages", []) + a.get("secondary_stages", [])
+            ]
+            if candidates:
+                rework_agent = max(candidates, key=lambda a: a.get("base_weight", 0.0))["id"]
+
+        # REQ-007: if no available rework agent, escalate
+        if rework_agent is None:
+            logger.warning("No available review agent for rework of %s, escalating", task_id)
+            self._create_escalation_issue(
+                reason=f"No available review agent for rework of task {task_id}",
+                context={"agent_id": "unknown", "task_id": task_id},
+            )
+            return
+
+        # REQ-008: clear previous consensus file
+        self.state.clear_consensus(task_id)
+
+        # REQ-002: write assignment with stage=review, re_review_count=<n>
+        self.state.write_assignment(rework_agent, {
+            "agent_id": rework_agent,
+            "task_id": task_id,
+            "stage": "review",
+            "re_review_count": re_review_count,
+            "github_issue_number": issue_number,
+            "assigned_at": datetime.now(timezone.utc).isoformat(),
+            "timeout_minutes": self.config["orchestrator"]["assignment_timeout_minutes"],
+            "context": {
+                "consensus": result.to_dict() if hasattr(result, "to_dict") else {},  # type: ignore[attr-defined]
+            },
+        })
+
+        # REQ-003: post GitHub Issue comment with rework details
+        self.github.add_comment(
+            issue_number,
+            f"## [Orchestrator] Rework Assigned\n\n"
+            f"**Action:** Rework required (re-review #{re_review_count})\n"
+            f"**Assigned to:** {rework_agent}\n"
+            f"**Consensus ratio:** {ratio:.2%}\n"
+            f"**Re-review count:** {re_review_count}\n",
+        )
+
+        # REQ-005: update task state to status=rework
+        if hasattr(self.state, "write_task_state"):
+            self.state.write_task_state(task_id, {"status": "rework"})  # type: ignore[attr-defined]
+
+        # Mark as processed for idempotency
+        self._rework_keys.add(dedup_key)
+
+        logger.info(
+            "Rework triggered for %s: assigned to %s (re_review_count=%d)",
+            task_id, rework_agent, re_review_count,
+        )
+
     # --- Phase 5b: Escalation ---
 
     def _check_escalation_triggers(self) -> list[dict]:

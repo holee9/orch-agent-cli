@@ -165,6 +165,16 @@ class StateManager:
         path = self.base_dir / "consensus" / f"{task_id}.json"
         return self._read_json(path)
 
+    def clear_consensus(self, task_id: str) -> bool:
+        """Remove the consensus file for a task. Returns True if file existed."""
+        _validate_id(task_id, "task_id")
+        path = self.base_dir / "consensus" / f"{task_id}.json"
+        if path.exists():
+            path.unlink()
+            logger.info("Cleared consensus for %s", task_id)
+            return True
+        return False
+
     # --- Cache Operations ---
 
     def cache_issues(self, issues: list[dict]) -> Path:
