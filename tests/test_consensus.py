@@ -297,3 +297,98 @@ def test_consensus_degraded_mode(engine: ConsensusEngine) -> None:
     assert result.action == "proceed"
     assert result.ratio == pytest.approx(1.0)
     assert len(result.details) == 2
+
+
+# ---------------------------------------------------------------------------
+# Test 11–14: environment_constrained — BUG-2 regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_environment_constrained_excluded_from_dispersion(engine: ConsensusEngine) -> None:
+    """Constrained vote outlier should not trigger dispersion_warning.
+
+    Scenario: Codex offline (score=65, constrained), Claude=95, Gemini=100.
+    Without fix: dispersion = 100-65 = 35 > 20 -> warning.
+    With fix: only unconstrained votes used -> dispersion = 100-95 = 5 -> no warning.
+    """
+    votes = [
+        _make_vote("claude", vote="ready", score=95, base_weight=0.40),
+        AgentVote(
+            agent_id="codex",
+            score=65,
+            vote="not_ready",
+            confidence=0.8,
+            base_weight=0.35,
+            environment_constrained=True,
+        ),
+        _make_vote("gemini", vote="ready", score=100, base_weight=0.25),
+    ]
+
+    result = engine.compute("TASK-011", votes)
+
+    assert result.dispersion_warning is False
+
+
+def test_environment_constrained_still_counts_in_ratio(engine: ConsensusEngine) -> None:
+    """Constrained votes must still participate in the voting ratio calculation."""
+    votes = [
+        _make_vote("claude", vote="ready", score=95, base_weight=0.40),
+        AgentVote(
+            agent_id="codex",
+            score=65,
+            vote="not_ready",
+            confidence=1.0,
+            base_weight=0.35,
+            environment_constrained=True,
+        ),
+        _make_vote("gemini", vote="ready", score=92, base_weight=0.25),
+    ]
+
+    result = engine.compute("TASK-012", votes)
+
+    # ready weight = 0.40 + 0.25 = 0.65, total = 1.0 -> ratio = 0.65 < 0.9
+    assert result.ratio == pytest.approx(0.65)
+    assert result.can_proceed is False
+
+
+def test_build_votes_reads_environment_constrained_flag(engine: ConsensusEngine) -> None:
+    """build_votes_from_reports must propagate environment_constrained from report."""
+    reports = {
+        "claude": {"score": 95, "vote": "ready", "confidence": 1.0},
+        "codex": {
+            "score": 65,
+            "vote": "not_ready",
+            "confidence": 0.8,
+            "environment_constrained": True,
+        },
+    }
+    config = [
+        {"id": "claude", "base_weight": 0.40, "reliability": 1.0},
+        {"id": "codex", "base_weight": 0.35, "reliability": 1.0},
+    ]
+
+    votes = engine.build_votes_from_reports(reports, config)
+
+    codex_vote = next(v for v in votes if v.agent_id == "codex")
+    claude_vote = next(v for v in votes if v.agent_id == "claude")
+    assert codex_vote.environment_constrained is True
+    assert claude_vote.environment_constrained is False
+
+
+def test_dispersion_fallback_when_all_constrained(engine: ConsensusEngine) -> None:
+    """When all votes are constrained, fall back to using all votes for dispersion."""
+    votes = [
+        AgentVote(
+            agent_id="claude", score=95, vote="ready", confidence=1.0,
+            base_weight=0.40, environment_constrained=True,
+        ),
+        AgentVote(
+            agent_id="codex", score=65, vote="not_ready", confidence=1.0,
+            base_weight=0.35, environment_constrained=True,
+        ),
+    ]
+
+    # Should not raise; dispersion = 95-65 = 30 > 20 -> warning
+    result = engine.compute("TASK-014", votes)
+
+    assert result.dispersion_warning is True

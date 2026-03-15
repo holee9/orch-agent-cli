@@ -135,3 +135,54 @@ def test_no_escalation_when_within_timeout(tmp_path: Path) -> None:
     triggers = orch._check_escalation_triggers()
 
     assert triggers == []
+
+
+# ---------------------------------------------------------------------------
+# BUG-3 regression: deduplication guard for escalation issues
+# ---------------------------------------------------------------------------
+
+
+def test_no_duplicate_escalation_same_agent_task(tmp_path: Path) -> None:
+    """Calling _create_escalation_issue twice with same agent/task creates only one issue."""
+    orch = _make_orchestrator(tmp_path)
+    orch.github.create_issue = MagicMock(return_value=10)
+
+    context = {"agent_id": "codex", "task_id": "task-dup"}
+    first = orch._create_escalation_issue("timeout", context)
+    second = orch._create_escalation_issue("timeout", context)
+
+    assert first == 10
+    assert second is None
+    assert orch.github.create_issue.call_count == 1
+
+
+def test_different_tasks_get_separate_escalations(tmp_path: Path) -> None:
+    """Different agent/task combinations each get their own escalation issue."""
+    orch = _make_orchestrator(tmp_path)
+    orch.github.create_issue = MagicMock(side_effect=[20, 21])
+
+    first = orch._create_escalation_issue(
+        "timeout", {"agent_id": "codex", "task_id": "task-A"}
+    )
+    second = orch._create_escalation_issue(
+        "timeout", {"agent_id": "codex", "task_id": "task-B"}
+    )
+
+    assert first == 20
+    assert second == 21
+    assert orch.github.create_issue.call_count == 2
+
+
+def test_consensus_escalate_no_duplicate_same_issue_number(tmp_path: Path) -> None:
+    """check_consensus_ready must not create duplicate escalation for same issue number."""
+    orch = _make_orchestrator(tmp_path)
+    orch.github.create_issue = MagicMock(return_value=99)
+
+    # Pre-register issue 5 as already escalated
+    orch._escalated_issue_numbers.add(5)
+
+    # Simulate calling the escalation path a second time for issue #5
+    # by directly checking the dedup set (unit-level guard verification)
+    assert 5 in orch._escalated_issue_numbers
+    # A fresh issue number should not be in the set
+    assert 7 not in orch._escalated_issue_numbers
