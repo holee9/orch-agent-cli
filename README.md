@@ -596,8 +596,8 @@ target-project/                     # Target 프로젝트 (실제 개발 대상,
 - [x] BUG-2: `environment_constrained` 필드로 오프라인 에이전트 분산 오탐 수정 — [SPEC-P3-003](.moai/specs/SPEC-P3-003/spec.md)
 - [x] P4: `start_t1.sh` 좀비/중지 프로세스 자동 정리 — [SPEC-P3-003](.moai/specs/SPEC-P3-003/spec.md)
 
-**P2 — 진행 예정**
-- [ ] **SPEC-P3-004**: Consensus `rework` 판정 후 자동 재할당 (re-review auto-trigger) — [spec](.moai/specs/SPEC-P3-004/spec.md)
+**P2 — 완료 ✅**
+- [x] **SPEC-P3-004**: Consensus `rework` 판정 후 자동 재할당 (`_trigger_rework()`, 멱등성, max_rereviews escalation) — [spec](.moai/specs/SPEC-P3-004/spec.md)
 - [ ] 웹훅 경로 문서화 명확화 (`.orchestra/cache/webhook_events/`)
 - [ ] 로그 파일 격리 (live 오케스트레이터 → target project 로그로)
 

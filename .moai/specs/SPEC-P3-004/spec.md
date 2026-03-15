@@ -6,9 +6,9 @@
 |-------|-------|
 | SPEC-ID | SPEC-P3-004 |
 | Created | 2026-03-15 |
-| Status | approved |
+| Status | completed |
 | Priority | P2 |
-| Issue | TBD |
+| Commit | 6ba20a5 |
 
 ## Summary
 
