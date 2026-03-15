@@ -153,6 +153,10 @@ class Orchestrator:
         # Idempotency guard: track task_ids that already triggered readme-sync
         self._readme_sync_keys: set[str] = set()
 
+        # Fully-completed tasks cache: prevents re-kickoff after clear_completion removes
+        # the completed file. Persists for the lifetime of this process.
+        self._fully_completed_tasks: set[str] = set()
+
         # Resolve paths — prefix with target_path when set
         _base = Path(target_path) if target_path else Path(".")
         self.inbox_dir = _base / self.config["orchestrator"]["inbox_dir"]
@@ -406,24 +410,27 @@ class Orchestrator:
     def _has_active_task(self, issue_number: int) -> bool:
         """Return True if issue_number already has an active or completed task.
 
-        Checks both the current assignment file for the primary kickoff agent and
-        the completed state directory to avoid duplicate assignments.
-
-        Note: Only checks the kickoff stage assignment. If the kickoff agent has
-        already handed off the task to a later stage, the completed/ directory
-        check covers that case. Mid-pipeline in-progress tasks for non-kickoff
-        stages are not checked here.
+        Checks all active assignments (any agent, any pipeline stage), the
+        completed state directory, and the in-memory fully-completed cache to
+        prevent duplicate kickoffs even after clear_completion removes the file.
         """
         task_id = self._TASK_ID_FMT.format(issue_number)
-        kickoff_agent = self._get_primary_agent("kickoff")
-        if kickoff_agent:
-            assignment = self.state.read_assignment(kickoff_agent)
-            if assignment and assignment.get("task_id") == task_id:
+
+        # Check in-memory cache of fully-completed tasks (survives clear_completion)
+        if task_id in self._fully_completed_tasks:
+            return True
+
+        # Check all active assignments across all agents and stages
+        assignments = self.state.list_assignments()
+        for assignment in assignments.values():
+            if assignment.get("task_id") == task_id:
                 return True
 
-        completed_path = self.state.base_dir / "state" / "completed" / f"{task_id}.json"
-        if completed_path.exists():
-            return True
+        # Check completed tasks (filename pattern: {agent_id}-{task_id}.json)
+        completed_dir = self.state.base_dir / "state" / "completed"
+        if completed_dir.exists():
+            for _ in completed_dir.glob(f"*-{task_id}.json"):
+                return True
 
         return False
 
@@ -462,6 +469,11 @@ class Orchestrator:
                 "spec_path": f"docs/specs/SPEC-{issue_number:03d}.md",
                 "plan_path": f"docs/plans/PLAN-{issue_number:03d}.md",
                 "branch_name": f"feat/{task_id}",
+                "brief_path": f"docs/briefs/BRIEF-{issue_number:03d}.md",
+                "target_project_path": os.environ.get(
+                    "TARGET_PROJECT_PATH",
+                    self.config["orchestrator"].get("target_project_path", ""),
+                ),
             },
         }
         self.state.write_assignment(kickoff_agent, assignment)
@@ -525,7 +537,11 @@ class Orchestrator:
     # --- Phase 2: GitHub Sync ---
 
     def sync_github_issues(self) -> int:
-        """Poll GitHub for issue updates and cache locally."""
+        """Poll GitHub for issue updates, cache locally, and auto-kickoff new issues.
+
+        All open issues (human- or agent-created) are eligible for kickoff.
+        Deduplication is handled by _has_active_task().
+        """
         try:
             issues = self.github.list_issues(state="open")
             issue_dicts = [
@@ -538,6 +554,15 @@ class Orchestrator:
                 for i in issues
             ]
             self.state.cache_issues(issue_dicts)
+            # Only attempt a kickoff when no agent is currently assigned.
+            # This prevents overwriting an in-progress assignment (e.g., when
+            # process_completions() has already advanced a task in this same cycle).
+            if not self.state.list_assignments():
+                for issue in issues:
+                    if not self._has_active_task(issue.number):
+                        self._create_kickoff_assignment(issue.number)
+                        logger.info("Auto-kickoff from GitHub sync: Issue #%d", issue.number)
+                        break  # One kickoff per cycle
             return len(issue_dicts)
         except Exception:
             logger.exception("Failed to sync GitHub issues")
@@ -559,6 +584,10 @@ class Orchestrator:
                 if next_agent != agent_id:
                     self.state.clear_assignment(agent_id)
                 self.state.clear_completion(agent_id, task_id)
+                # When no next stage exists the task is fully done; cache it so
+                # _has_active_task() still returns True after the file is deleted.
+                if next_agent is None:
+                    self._fully_completed_tasks.add(task_id)
                 processed += 1
             except Exception:
                 logger.exception("Failed to process completion: %s/%s", agent_id, task_id)
@@ -594,6 +623,10 @@ class Orchestrator:
                     "brief_path": prev_context.get("brief_path", ""),
                     "target_project_path": prev_context.get("target_project_path", ""),
                 }
+                # Checkpoint commit: preserve implementation work before review
+                # even if the pipeline later fails at consensus or escalates.
+                if current_stage == "implementation":
+                    self._checkpoint_commit(task_id, prev_context)
                 if current_stage == "release" and next_stage == "readme-sync":
                     issue_number = assignment.get("github_issue_number", 0)
                     self._trigger_readme_sync(task_id, issue_number, prev_context)
@@ -639,6 +672,43 @@ class Orchestrator:
             if stage in agent.get("secondary_stages", []):
                 return agent["id"]
         return None
+
+    def _checkpoint_commit(self, task_id: str, context: dict[str, Any]) -> None:
+        """Create a local git commit to preserve implementation work.
+
+        Called when implementation stage completes, before review begins.
+        Ensures code history is retained even if pipeline fails at consensus.
+        Failures are non-fatal: logs a warning and continues pipeline.
+        """
+        import subprocess
+
+        target_path = context.get("target_project_path") or os.environ.get(
+            "TARGET_PROJECT_PATH",
+            self.config["orchestrator"].get("target_project_path", ""),
+        )
+        if not target_path:
+            logger.warning("_checkpoint_commit: target_project_path not set, skipping")
+            return
+        try:
+            result = subprocess.run(
+                ["git", "-C", target_path, "status", "--porcelain"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if not result.stdout.strip():
+                logger.info("_checkpoint_commit: no changes to commit for %s", task_id)
+                return
+            subprocess.run(
+                ["git", "-C", target_path, "add", "-A"],
+                check=True, capture_output=True, timeout=30,
+            )
+            subprocess.run(
+                ["git", "-C", target_path, "commit",
+                 "-m", f"feat: implementation checkpoint for {task_id}"],
+                check=True, capture_output=True, timeout=30,
+            )
+            logger.info("_checkpoint_commit: committed implementation for %s", task_id)
+        except Exception:
+            logger.warning("_checkpoint_commit: failed for %s, continuing pipeline", task_id)
 
     # @MX:NOTE: [AUTO] Append-only README sync stage. Idempotent per task_id.
     # @MX:SPEC: SPEC-P3-005
@@ -892,10 +962,13 @@ class Orchestrator:
                         issue_number, add=["consensus:fail"], remove=["status:review-needed"]
                     )
 
-                # Clear consensus assignment to prevent re-processing on next poll
-                consensus_agent = review_task_agents.get(task_id)
-                if consensus_agent:
-                    self.state.clear_assignment(consensus_agent)
+                # Clear consensus assignment to prevent re-processing on next poll.
+                # Skip clear when can_proceed=True: release assignment already overwrote
+                # the same agent slot — clearing would delete the release assignment.
+                if not result.can_proceed:
+                    consensus_agent = review_task_agents.get(task_id)
+                    if consensus_agent:
+                        self.state.clear_assignment(consensus_agent)
 
                 triggered += 1
 

@@ -12,8 +12,8 @@ orchestrator:
   max_retries: 3
 
 consensus:
-  threshold: 0.9
-  score_ready_min: 90
+  threshold: 0.65  # 2/3 weighted agents must approve (claude=0.40+gemini=0.25=0.65)
+  score_ready_min: 70
   dispersion_alert_threshold: 20
   max_rereviews: 2
 
