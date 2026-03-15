@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 import yaml
 
 
@@ -35,7 +34,6 @@ class TestDashboardRendersWithoutError:
 
     def test_render_returns_renderable(self, tmp_path: Path) -> None:
         """render() should return a rich RenderableType."""
-        from rich.console import RenderableType
         from scripts.dashboard import Dashboard
 
         config_file = _write_config(tmp_path)
