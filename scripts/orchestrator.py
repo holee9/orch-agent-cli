@@ -607,6 +607,20 @@ class Orchestrator:
             )
             return
 
+        # Stale completion guard: skip if completion predates the current assignment.
+        # This handles the race condition where the orchestrator restarts after
+        # _trigger_readme_sync writes a new assignment (e.g., readme-sync) but before
+        # clear_completion runs — the old completion would otherwise re-advance the
+        # workflow past the newly-written stage.
+        completion_at = completion.get("completed_at", "")
+        assignment_at = assignment.get("assigned_at", "")
+        if completion_at and assignment_at and completion_at < assignment_at:
+            logger.warning(
+                "Skipping stale completion for %s/%s: completed_at (%s) < assigned_at (%s)",
+                agent_id, task_id, completion_at, assignment_at,
+            )
+            return None
+
         current_stage = assignment.get("stage", "")
         next_stage = self._get_next_stage(current_stage)
 
@@ -789,6 +803,15 @@ class Orchestrator:
                     f"git -C {shlex.quote(target_project_path)} commit -m "
                     f"{shlex.quote(f'docs: readme-sync for {task_id}')}"
                 ),
+                # Include standard context sub-dict so _advance_workflow can propagate
+                # spec_path, plan_path, etc. when advancing readme-sync -> final-report.
+                "context": {
+                    "spec_path": prev_context.get("spec_path", ""),
+                    "plan_path": prev_context.get("plan_path", ""),
+                    "branch_name": f"feat/{task_id}",
+                    "brief_path": brief_path,
+                    "target_project_path": target_project_path,
+                },
             })
             logger.info(
                 "readme-sync assignment created for %s (agent: %s)", task_id, agent
