@@ -984,11 +984,14 @@ class Orchestrator:
                     self.github.update_labels(
                         issue_number, add=["consensus:fail"], remove=["status:review-needed"]
                     )
+                    last_review_agent = review_task_agents.get(task_id)
+                    self._trigger_rework(task_id, issue_number, result, last_review_agent)
 
                 # Clear consensus assignment to prevent re-processing on next poll.
-                # Skip clear when can_proceed=True: release assignment already overwrote
-                # the same agent slot — clearing would delete the release assignment.
-                if not result.can_proceed:
+                # Skip when can_proceed=True: release assignment already overwrote the slot.
+                # Skip when action=rework: _trigger_rework wrote a new review assignment
+                # into the same slot — clearing it would delete the rework assignment.
+                if not result.can_proceed and result.action != "rework":
                     consensus_agent = review_task_agents.get(task_id)
                     if consensus_agent:
                         self.state.clear_assignment(consensus_agent)
