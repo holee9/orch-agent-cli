@@ -249,6 +249,7 @@ def test_sync_github_issues(tmp_path: Path) -> None:
     ]
     orc.github.list_issues = MagicMock(return_value=fake_issues)
     orc.state.cache_issues = MagicMock()
+    orc._has_active_task = MagicMock(return_value=True)  # no new kickoffs in this test
 
     count = orc.sync_github_issues()
 
@@ -259,6 +260,53 @@ def test_sync_github_issues(tmp_path: Path) -> None:
     assert len(cached_arg) == 2
     assert cached_arg[0]["number"] == 1
     assert cached_arg[0]["labels"] == ["type:kickoff"]
+
+
+def test_sync_github_issues_auto_kickoff(tmp_path: Path) -> None:
+    """sync_github_issues creates ONE kickoff per cycle (first unhandled issue)."""
+    from scripts.github_client import GitHubIssue
+
+    orc = _make_orchestrator(tmp_path)
+
+    fake_issues = [
+        GitHubIssue(number=10, title="Human feature", body="", state="OPEN", labels=[]),
+        GitHubIssue(number=11, title="Agent escalation", body="", state="OPEN", labels=["type:escalation"]),
+    ]
+    orc.github.list_issues = MagicMock(return_value=fake_issues)
+    orc.state.cache_issues = MagicMock()
+    orc.state.list_assignments = MagicMock(return_value={})  # agent is idle
+    orc._has_active_task = MagicMock(return_value=False)
+    orc._create_kickoff_assignment = MagicMock()
+
+    count = orc.sync_github_issues()
+
+    assert count == 2
+    # Only ONE kickoff per cycle — prevents overwriting the single agent slot
+    assert orc._create_kickoff_assignment.call_count == 1
+    assert orc._create_kickoff_assignment.call_args.args[0] == 10
+
+
+def test_sync_github_issues_no_duplicate_kickoff(tmp_path: Path) -> None:
+    """sync_github_issues skips issues that already have an active task."""
+    from scripts.github_client import GitHubIssue
+
+    orc = _make_orchestrator(tmp_path)
+
+    fake_issues = [
+        GitHubIssue(number=5, title="In progress", body="", state="OPEN", labels=[]),
+        GitHubIssue(number=6, title="New issue", body="", state="OPEN", labels=[]),
+    ]
+    orc.github.list_issues = MagicMock(return_value=fake_issues)
+    orc.state.cache_issues = MagicMock()
+    orc.state.list_assignments = MagicMock(return_value={})  # agent is idle
+    # Issue 5 has active task, issue 6 does not
+    orc._has_active_task = MagicMock(side_effect=lambda n: n == 5)
+    orc._create_kickoff_assignment = MagicMock()
+
+    orc.sync_github_issues()
+
+    assert orc._create_kickoff_assignment.call_count == 1
+    orc._create_kickoff_assignment.assert_called_once_with(6)
 
 
 # ---------------------------------------------------------------------------
