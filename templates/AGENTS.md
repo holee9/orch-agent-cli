@@ -59,6 +59,19 @@ Upon task completion, write to `.orchestra/state/completed/{agent_id}-{task_id}.
 }
 ```
 
+## Protected Infrastructure Files
+
+**NEVER delete, overwrite, or move these files under any circumstances:**
+
+- `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `GEMINI.md` — agent role instructions
+- `start_t1.sh`, `start_t2.sh`, `start_t3.sh`, `start_t4.sh` — terminal launcher scripts
+- `.gitignore` — git exclusion rules
+- `.orchestra/` directory and all its contents — orchestration state
+
+These files are required for the multi-agent orchestration system to function.
+Deleting them breaks the pipeline and requires manual recovery.
+If a task requires restructuring the project, **exclude these files from any cleanup or reorganization**.
+
 ## File Scope Enforcement
 
 ### By Development Stage
