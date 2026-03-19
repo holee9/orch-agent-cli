@@ -195,10 +195,15 @@ class ConsensusEngine:
             else agents_config
         )
 
+        # Normalise vote vocabulary: agents may submit "approved"/"pass"/"accept"
+        # instead of the canonical "ready". Map them here so ratio is computed correctly.
+        _READY_SYNONYMS = frozenset({"ready", "approved", "pass", "accept", "ok"})
+
         votes = []
         for agent_id, report in reports.items():
             score = report.get("score")
-            vote = report.get("vote")
+            raw_vote = report.get("vote")
+            vote = "ready" if str(raw_vote).lower() in _READY_SYNONYMS else raw_vote
             confidence = report.get("confidence")
 
             # Validate required fields
